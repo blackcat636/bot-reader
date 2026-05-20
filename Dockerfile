@@ -18,3 +18,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY api/ api/
 COPY bot/ bot/
+COPY i18n/ i18n/
