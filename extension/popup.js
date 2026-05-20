@@ -3,6 +3,23 @@ const urlEl = document.getElementById("url");
 const apiInput = document.getElementById("api-url-input");
 const saveBtn = document.getElementById("save-btn");
 
+const lang = chrome.i18n.getUILanguage().split("-")[0];
+
+function i18n(key, ...subs) {
+  return chrome.i18n.getMessage(key, subs) || key;
+}
+
+function applyI18n() {
+  document.querySelectorAll("[data-i18n]").forEach((el) => {
+    const msg = i18n(el.dataset.i18n);
+    if (msg) el.textContent = msg;
+  });
+  document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
+    const msg = i18n(el.dataset.i18nPlaceholder);
+    if (msg) el.placeholder = msg;
+  });
+}
+
 function getOrCreateUserId() {
   return new Promise((resolve) => {
     chrome.storage.local.get(["userId", "apiUrl"], (data) => {
@@ -30,31 +47,31 @@ function setButtons(disabled) {
 
 async function convert(fmt, url, userId, apiUrl) {
   setButtons(true);
-  setStatus("⏳ Завантажую сторінку…");
+  setStatus(i18n("statusFetching"));
 
   try {
     const extractResp = await fetch(`${apiUrl}/extract`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, user_id: userId }),
+      body: JSON.stringify({ url, user_id: userId, user_type: "browser", lang }),
     });
 
     if (!extractResp.ok) {
       const err = await extractResp.json().catch(() => ({}));
-      setStatus(err.detail || "Помилка при завантаженні.", true);
+      setStatus(err.detail || i18n("errorFetchFailed"), true);
       setButtons(false);
       return;
     }
 
     const article = await extractResp.json();
-    setStatus("⏳ Генерую файл…");
+    setStatus(i18n("statusGenerating"));
 
     const dlResp = await fetch(
-      `${apiUrl}/articles/${article.id}/download?format=${fmt}&user_id=${userId}`
+      `${apiUrl}/articles/${article.id}/download?format=${fmt}&user_id=${userId}&lang=${lang}`
     );
 
     if (!dlResp.ok) {
-      setStatus("Помилка генерації файлу.", true);
+      setStatus(i18n("errorGenerateFailed"), true);
       setButtons(false);
       return;
     }
@@ -71,23 +88,24 @@ async function convert(fmt, url, userId, apiUrl) {
     a.click();
     URL.revokeObjectURL(blobUrl);
 
-    setStatus("✅ Файл збережено!");
+    setStatus(i18n("statusSaved"));
     loadRecent(savedApi);
   } catch (e) {
-    setStatus("Не вдалося зв'язатися з API. Перевір налаштування.", true);
+    setStatus(i18n("errorApiConnect"), true);
   }
 
   setButtons(false);
 }
 
 (async () => {
+  applyI18n();
+
   const { userId, apiUrl } = await getOrCreateUserId();
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const currentUrl = tab?.url || "";
   urlEl.textContent = currentUrl;
 
-  // Завантажуємо останню історію
   async function loadRecent(api) {
     if (!api) return;
     try {
@@ -95,7 +113,7 @@ async function convert(fmt, url, userId, apiUrl) {
       const data = await resp.json();
       const list = document.getElementById("recent-list");
       if (!data.items?.length) {
-        list.textContent = "Поки порожньо.";
+        list.textContent = i18n("recentEmpty");
         return;
       }
       list.innerHTML = "";
@@ -108,14 +126,13 @@ async function convert(fmt, url, userId, apiUrl) {
         list.appendChild(el);
       });
       const header = document.getElementById("recent-header");
-      header.textContent = `📚 Остання історія (всього: ${data.total})`;
+      header.textContent = i18n("recentHeader", String(data.total));
 
-      // badge
       const label = data.total > 99 ? "99+" : String(data.total);
       chrome.action.setBadgeText({ text: label });
       chrome.action.setBadgeBackgroundColor({ color: "#1a5fa8" });
     } catch {
-      document.getElementById("recent-list").textContent = "Не вдалося завантажити.";
+      document.getElementById("recent-list").textContent = i18n("recentLoadError");
     }
   }
 
@@ -124,122 +141,121 @@ async function convert(fmt, url, userId, apiUrl) {
 
   document.querySelectorAll("button[data-fmt]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const savedApi = apiInput.value.trim().replace(/\/$/, "");
-      if (!savedApi) {
-        setStatus("Спочатку вкажи API URL в налаштуваннях.", true);
+      const api = apiInput.value.trim().replace(/\/$/, "");
+      if (!api) {
+        setStatus(i18n("errorSetApiFirst"), true);
         return;
       }
-      convert(btn.dataset.fmt, currentUrl, userId, savedApi);
+      convert(btn.dataset.fmt, currentUrl, userId, api);
     });
   });
 
   saveBtn.addEventListener("click", () => {
     const val = apiInput.value.trim().replace(/\/$/, "");
     chrome.storage.local.set({ apiUrl: val });
-    setStatus("API URL збережено.");
+    setStatus(i18n("apiUrlSaved"));
   });
 
   const shareStatus = document.getElementById("share-status");
   document.getElementById("share-claim-btn").addEventListener("click", async () => {
     const code = document.getElementById("share-code-input").value.trim().toUpperCase();
     const api = apiInput.value.trim().replace(/\/$/, "");
-    if (!code || !api) { shareStatus.textContent = "Вкажи код та API URL."; return; }
-    shareStatus.textContent = "⏳ Отримую…";
+    if (!code || !api) { shareStatus.textContent = i18n("errorCodeAndApi"); return; }
+    shareStatus.textContent = i18n("shareReceiving");
     try {
       const resp = await fetch(`${api}/share/claim`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, user_id: userId, user_type: "browser" }),
+        body: JSON.stringify({ code, user_id: userId, user_type: "browser", lang }),
       });
       const data = await resp.json();
       if (!resp.ok) {
-        shareStatus.textContent = data.detail || "Помилка.";
+        shareStatus.textContent = data.detail || i18n("errorFetchFailed");
       } else {
-        shareStatus.textContent = `✅ Додано: «${data.title}»`;
+        shareStatus.textContent = i18n("shareAdded", data.title);
         document.getElementById("share-code-input").value = "";
       }
     } catch {
-      shareStatus.textContent = "Не вдалося зв'язатися з API.";
+      shareStatus.textContent = i18n("errorApiConnect");
     }
   });
 
   const linkStatus = document.getElementById("link-status");
   const linkCodeInput = document.getElementById("link-code-input");
+  const linkConfirmBtn = document.getElementById("link-confirm-btn");
 
   let pendingCode = null;
 
-  document.getElementById("link-confirm-btn").addEventListener("click", async () => {
+  linkConfirmBtn.addEventListener("click", async () => {
     const api = apiInput.value.trim().replace(/\/$/, "");
 
-    // Якщо вже є preview — підтверджуємо злиття
     if (pendingCode) {
-      linkStatus.textContent = "⏳ Зливаю…";
+      linkStatus.textContent = i18n("linkMerging");
       try {
         const resp = await fetch(`${api}/link/confirm`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code: pendingCode, user_id: userId, user_type: "browser" }),
+          body: JSON.stringify({ code: pendingCode, user_id: userId, user_type: "browser", lang }),
         });
         const data = await resp.json();
         if (!resp.ok) {
-          linkStatus.textContent = data.detail || "Помилка.";
+          linkStatus.textContent = data.detail || i18n("errorFetchFailed");
         } else {
-          linkStatus.textContent = `✅ Готово! Акаунтів у групі: ${data.merged_users}`;
+          linkStatus.textContent = i18n("linkMerged", String(data.merged_users));
           linkCodeInput.value = "";
         }
       } catch {
-        linkStatus.textContent = "Не вдалося зв'язатися з API.";
+        linkStatus.textContent = i18n("errorApiConnect");
       }
       pendingCode = null;
-      document.getElementById("link-confirm-btn").textContent = "Прив'язати";
+      linkConfirmBtn.textContent = i18n("linkBtnDefault");
       return;
     }
 
-    // Перший клік — показуємо preview
     const code = linkCodeInput.value.trim().toUpperCase();
     if (!code || !api) {
-      linkStatus.textContent = "Вкажи код та API URL.";
+      linkStatus.textContent = i18n("errorCodeAndApi");
       return;
     }
-    linkStatus.textContent = "⏳ Перевіряю…";
+    linkStatus.textContent = i18n("linkChecking");
     try {
       const resp = await fetch(
-        `${api}/link/preview?code=${code}&user_id=${userId}&user_type=browser`
+        `${api}/link/preview?code=${code}&user_id=${userId}&user_type=browser&lang=${lang}`
       );
       const data = await resp.json();
       if (!resp.ok) {
-        linkStatus.textContent = data.detail || "Помилка.";
+        linkStatus.textContent = data.detail || i18n("errorFetchFailed");
         return;
       }
       if (data.already_same_group) {
-        linkStatus.textContent = "ℹ️ Ці акаунти вже в одній групі.";
+        linkStatus.textContent = i18n("linkAlreadySame");
         return;
       }
       linkStatus.textContent =
-        `Твоя група: ${data.your_group_users} акаунт(ів), ${data.your_group_articles} статей\n` +
-        `Інша група: ${data.code_group_users} акаунт(ів), ${data.code_group_articles} статей\n` +
-        `Після злиття: ${data.total_users} акаунти, ${data.total_articles} статей`;
+        i18n("linkPreviewYour", String(data.your_group_users), String(data.your_group_articles)) + "\n" +
+        i18n("linkPreviewOther", String(data.code_group_users), String(data.code_group_articles)) + "\n" +
+        i18n("linkPreviewAfter", String(data.total_users), String(data.total_articles));
       pendingCode = code;
-      document.getElementById("link-confirm-btn").textContent = "✅ Підтвердити злиття";
+      linkConfirmBtn.textContent = i18n("linkConfirmBtn");
     } catch {
-      linkStatus.textContent = "Не вдалося зв'язатися з API.";
+      linkStatus.textContent = i18n("errorApiConnect");
     }
   });
 
   document.getElementById("link-generate-btn").addEventListener("click", async () => {
     const api = apiInput.value.trim().replace(/\/$/, "");
-    if (!api) { linkStatus.textContent = "Вкажи API URL."; return; }
-    linkStatus.textContent = "⏳ Генерую код…";
+    if (!api) { linkStatus.textContent = i18n("errorApiUrl"); return; }
+    linkStatus.textContent = i18n("linkGenerating");
     try {
-      const resp = await fetch(`${api}/link/generate?user_id=${userId}&user_type=browser`, { method: "POST" });
+      const resp = await fetch(`${api}/link/generate?user_id=${userId}&user_type=browser&lang=${lang}`, { method: "POST" });
       const data = await resp.json();
       if (!resp.ok) {
-        linkStatus.textContent = data.detail || "Помилка.";
+        linkStatus.textContent = data.detail || i18n("errorFetchFailed");
       } else {
-        linkStatus.textContent = `Код: ${data.code} (діє 10 хв)`;
+        linkStatus.textContent = i18n("linkCode", data.code);
       }
     } catch {
-      linkStatus.textContent = "Не вдалося зв'язатися з API.";
+      linkStatus.textContent = i18n("errorApiConnect");
     }
   });
 })();

@@ -10,6 +10,8 @@ from telegram.ext import (
     CallbackQueryHandler, filters, ContextTypes,
 )
 
+from api.i18n import t, normalize
+
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -23,18 +25,25 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
-def format_keyboard(article_id: int) -> InlineKeyboardMarkup:
+def get_lang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    if "lang" not in context.user_data:
+        raw = getattr(update.effective_user, "language_code", None)
+        context.user_data["lang"] = normalize(raw)
+    return context.user_data["lang"]
+
+
+def format_keyboard(article_id: int, lang: str = "en") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("📄 PDF", callback_data=f"fmt:pdf:{article_id}"),
-            InlineKeyboardButton("📝 Markdown", callback_data=f"fmt:md:{article_id}"),
+            InlineKeyboardButton(t(lang, "format_pdf"), callback_data=f"fmt:pdf:{article_id}"),
+            InlineKeyboardButton(t(lang, "format_md"), callback_data=f"fmt:md:{article_id}"),
         ],
         [
-            InlineKeyboardButton("🌐 HTML", callback_data=f"fmt:html:{article_id}"),
-            InlineKeyboardButton("📚 EPUB", callback_data=f"fmt:epub:{article_id}"),
+            InlineKeyboardButton(t(lang, "format_html"), callback_data=f"fmt:html:{article_id}"),
+            InlineKeyboardButton(t(lang, "format_epub"), callback_data=f"fmt:epub:{article_id}"),
         ],
         [
-            InlineKeyboardButton("📤 Поділитись", callback_data=f"share:{article_id}"),
+            InlineKeyboardButton(t(lang, "format_share"), callback_data=f"share:{article_id}"),
         ],
     ])
 
@@ -48,67 +57,83 @@ def is_valid_url(text: str) -> bool:
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    lang = get_lang(update, context)
+    await update.message.reply_text(t(lang, "start"), parse_mode="HTML")
+
+
+async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    lang = get_lang(update, context)
     await update.message.reply_text(
-        "Привіт! Надішли мені посилання на статтю — я завантажу її в режимі читача "
-        "(без реклами, банерів і коментарів) і запитаю, у якому форматі зберегти.\n\n"
-        "Просто вставте URL і надішліть.\n"
-        "/history — переглянути збережені статті.\n"
-        "/find <i>слово</i> — пошук по заголовку.\n"
-        "/link — прив'язати Chrome розширення.",
-        parse_mode="HTML",
+        t(lang, "settings_prompt"),
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton(t(lang, "settings_lang_en"), callback_data="setlang:en"),
+            InlineKeyboardButton(t(lang, "settings_lang_uk"), callback_data="setlang:uk"),
+        ]])
     )
 
 
+async def handle_setlang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    new_lang = query.data.split(":")[1]
+    context.user_data["lang"] = new_lang
+    user_id = str(query.from_user.id)
+    async with httpx.AsyncClient() as client:
+        await client.patch(
+            f"{API_URL}/users/{user_id}/lang",
+            params={"lang": new_lang, "user_type": "telegram"},
+        )
+    await query.edit_message_text(t(new_lang, "settings_lang_set"))
+
+
 async def link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    lang = get_lang(update, context)
     user_id = str(update.effective_user.id)
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{API_URL}/link/generate",
-            params={"user_id": user_id, "user_type": "telegram"},
+            params={"user_id": user_id, "user_type": "telegram", "lang": lang},
         )
     if resp.status_code != 200:
-        await update.message.reply_text("❌ Не вдалося згенерувати код. Спробуй ще раз.")
+        await update.message.reply_text(t(lang, "link_generate_error"))
         return
     code = resp.json()["code"]
-    await update.message.reply_text(
-        f"🔗 Код для прив'язки розширення:\n\n"
-        f"<code>{code}</code>\n\n"
-        f"Введи його в налаштуваннях Chrome розширення. Діє 10 хвилин.\n\n"
-        f"Або надішли мені 6-символьний код з розширення, щоб прив'язати його до свого акаунту.",
-        parse_mode="HTML",
-    )
+    await update.message.reply_text(t(lang, "link_generated", code=code), parse_mode="HTML")
 
 
 async def handle_link_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     code = update.message.text.strip().upper()
+    lang = get_lang(update, context)
     user_id = str(update.effective_user.id)
 
     async with httpx.AsyncClient() as client:
         resp = await client.get(
             f"{API_URL}/link/preview",
-            params={"code": code, "user_id": user_id, "user_type": "telegram"},
+            params={"code": code, "user_id": user_id, "user_type": "telegram", "lang": lang},
         )
 
     if resp.status_code != 200:
-        await update.message.reply_text(f"❌ {resp.json().get('detail', 'Помилка.')}")
+        await update.message.reply_text(f"❌ {resp.json().get('detail', 'Error.')}")
         return
 
     data = resp.json()
 
     if data.get("already_same_group"):
-        await update.message.reply_text("ℹ️ Ці акаунти вже в одній групі.")
+        await update.message.reply_text(t(lang, "link_already_same"))
         return
 
-    text = (
-        f"🔗 <b>Попередній перегляд злиття</b>\n\n"
-        f"Твоя група: {data['your_group_users']} акаунт(ів), {data['your_group_articles']} статей\n"
-        f"Інша група: {data['code_group_users']} акаунт(ів), {data['code_group_articles']} статей\n\n"
-        f"Після злиття: <b>{data['total_users']} акаунти, {data['total_articles']} статей</b>\n\n"
-        f"Всі статті стануть спільними. Продовжити?"
+    text = t(
+        lang, "link_preview",
+        your_users=data["your_group_users"],
+        your_articles=data["your_group_articles"],
+        code_users=data["code_group_users"],
+        code_articles=data["code_group_articles"],
+        total_users=data["total_users"],
+        total_articles=data["total_articles"],
     )
     keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Так, злити", callback_data=f"linkconfirm:{code}"),
-        InlineKeyboardButton("❌ Скасувати", callback_data="linkcancel"),
+        InlineKeyboardButton(t(lang, "link_confirm_btn"), callback_data=f"linkconfirm:{code}"),
+        InlineKeyboardButton(t(lang, "link_cancel_btn"), callback_data="linkcancel"),
     ]])
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
 
@@ -116,6 +141,7 @@ async def handle_link_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def handle_share_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+    lang = get_lang(update, context)
 
     article_id = int(query.data.split(":")[1])
     user_id = str(query.from_user.id)
@@ -123,21 +149,19 @@ async def handle_share_generate(update: Update, context: ContextTypes.DEFAULT_TY
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{API_URL}/share/generate",
-            params={"article_id": article_id, "user_id": user_id},
+            params={"article_id": article_id, "user_id": user_id, "lang": lang},
         )
 
     if resp.status_code != 200:
-        await query.answer("❌ Не вдалося згенерувати код.", show_alert=True)
+        await query.answer(t(lang, "link_generate_error"), show_alert=True)
         return
 
     code = resp.json()["code"]
     await query.message.reply_text(
-        f"📤 Код для передачі статті:\n\n"
-        f"<code>{code}</code>\n\n"
-        f"Надішли його іншому користувачу. Код одноразовий — діє до використання.",
+        t(lang, "share_generated", code=code),
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("❌ Відмінити код", callback_data=f"sharerevoke:{code}:{user_id}"),
+            InlineKeyboardButton(t(lang, "share_revoke_btn"), callback_data=f"sharerevoke:{code}:{user_id}"),
         ]]),
     )
 
@@ -145,6 +169,7 @@ async def handle_share_generate(update: Update, context: ContextTypes.DEFAULT_TY
 async def handle_share_revoke(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+    lang = get_lang(update, context)
 
     parts = query.data.split(":")
     code, user_id = parts[1], parts[2]
@@ -152,44 +177,45 @@ async def handle_share_revoke(update: Update, context: ContextTypes.DEFAULT_TYPE
     async with httpx.AsyncClient() as client:
         resp = await client.delete(
             f"{API_URL}/share/{code}",
-            params={"user_id": user_id},
+            params={"user_id": user_id, "lang": lang},
         )
 
     if resp.status_code == 200:
-        await query.edit_message_text("✅ Код відмінено.")
+        await query.edit_message_text(t(lang, "share_revoked"))
     else:
-        await query.edit_message_text("❌ Код вже використано або не знайдено.")
+        await query.edit_message_text(t(lang, "share_revoke_error"))
 
 
 async def handle_share_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     code = update.message.text.strip().upper()
+    lang = get_lang(update, context)
     user_id = str(update.effective_user.id)
 
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{API_URL}/share/claim",
-            json={"code": code, "user_id": user_id, "user_type": "telegram"},
+            json={"code": code, "user_id": user_id, "user_type": "telegram", "lang": lang},
         )
 
     if resp.status_code != 200:
-        await update.message.reply_text(f"❌ {resp.json().get('detail', 'Помилка.')}")
+        await update.message.reply_text(f"❌ {resp.json().get('detail', 'Error.')}")
         return
 
     article = resp.json()
     await update.message.reply_text(
-        f"✅ Стаття додана до твоєї історії!\n\n"
-        f"<b>{article['title']}</b>\n\nОберіть формат:",
+        t(lang, "share_received", title=article["title"]),
         parse_mode="HTML",
-        reply_markup=format_keyboard(article["id"]),
+        reply_markup=format_keyboard(article["id"], lang),
     )
 
 
 async def handle_link_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+    lang = get_lang(update, context)
 
     if query.data == "linkcancel":
-        await query.edit_message_text("Скасовано.")
+        await query.edit_message_text(t(lang, "link_cancelled"))
         return
 
     code = query.data.split(":")[1]
@@ -198,21 +224,21 @@ async def handle_link_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{API_URL}/link/confirm",
-            json={"code": code, "user_id": user_id, "user_type": "telegram"},
+            json={"code": code, "user_id": user_id, "user_type": "telegram", "lang": lang},
         )
 
     if resp.status_code != 200:
-        await query.edit_message_text(f"❌ {resp.json().get('detail', 'Помилка.')}")
+        await query.edit_message_text(f"❌ {resp.json().get('detail', 'Error.')}")
         return
 
     merged = resp.json()["merged_users"]
-    await query.edit_message_text(f"✅ Готово! Акаунтів у групі: {merged}.")
+    await query.edit_message_text(t(lang, "link_merged", count=merged))
 
 
 PAGE_SIZE = 8
 
 
-def _history_keyboard(articles: list, offset: int, total: int) -> InlineKeyboardMarkup:
+def _history_keyboard(articles: list, offset: int, total: int, lang: str = "en") -> InlineKeyboardMarkup:
     buttons = []
     for a in articles:
         date = a["created_at"][:10]
@@ -221,9 +247,9 @@ def _history_keyboard(articles: list, offset: int, total: int) -> InlineKeyboard
 
     nav = []
     if offset > 0:
-        nav.append(InlineKeyboardButton("◀️ Назад", callback_data=f"histpage:{offset - PAGE_SIZE}"))
+        nav.append(InlineKeyboardButton(t(lang, "nav_prev"), callback_data=f"histpage:{offset - PAGE_SIZE}"))
     if offset + PAGE_SIZE < total:
-        nav.append(InlineKeyboardButton("▶️ Далі", callback_data=f"histpage:{offset + PAGE_SIZE}"))
+        nav.append(InlineKeyboardButton(t(lang, "nav_next"), callback_data=f"histpage:{offset + PAGE_SIZE}"))
     if nav:
         buttons.append(nav)
 
@@ -231,26 +257,27 @@ def _history_keyboard(articles: list, offset: int, total: int) -> InlineKeyboard
 
 
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    lang = get_lang(update, context)
     user_id = str(update.effective_user.id)
     async with httpx.AsyncClient() as client:
         resp = await client.get(f"{API_URL}/history", params={"user_id": user_id, "limit": PAGE_SIZE, "offset": 0})
     data = resp.json()
 
     if not data["items"]:
-        await update.message.reply_text("Історія порожня. Надішли посилання на статтю — я збережу її.")
+        await update.message.reply_text(t(lang, "history_empty"))
         return
 
     total = data["total"]
-    text = f"Збережені статті (всього: {total}):"
     await update.message.reply_text(
-        text,
-        reply_markup=_history_keyboard(data["items"], 0, total),
+        t(lang, "history_header", total=total),
+        reply_markup=_history_keyboard(data["items"], 0, total, lang),
     )
 
 
 async def handle_history_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+    lang = get_lang(update, context)
 
     offset = int(query.data.split(":")[1])
     user_id = str(query.from_user.id)
@@ -266,15 +293,16 @@ async def handle_history_page(update: Update, context: ContextTypes.DEFAULT_TYPE
     pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
 
     await query.edit_message_text(
-        f"Збережені статті (всього: {total}, сторінка {page}/{pages}):",
-        reply_markup=_history_keyboard(data["items"], offset, total),
+        t(lang, "history_page", total=total, page=page, pages=pages),
+        reply_markup=_history_keyboard(data["items"], offset, total, lang),
     )
 
 
 async def find(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    lang = get_lang(update, context)
     query_text = " ".join(context.args).strip() if context.args else ""
     if not query_text:
-        await update.message.reply_text("Використання: /find <i>слово для пошуку</i>", parse_mode="HTML")
+        await update.message.reply_text(t(lang, "find_usage"), parse_mode="HTML")
         return
 
     user_id = str(update.effective_user.id)
@@ -283,7 +311,7 @@ async def find(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     articles = resp.json()
 
     if not articles:
-        await update.message.reply_text(f"Нічого не знайдено за запитом «{query_text}».")
+        await update.message.reply_text(t(lang, "find_empty", query=query_text))
         return
 
     buttons = []
@@ -293,7 +321,7 @@ async def find(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         buttons.append([InlineKeyboardButton(label, callback_data=f"hist:{a['id']}")])
 
     await update.message.reply_text(
-        f"Результати пошуку «{query_text}»:",
+        t(lang, "find_header", query=query_text),
         reply_markup=InlineKeyboardMarkup(buttons),
     )
 
@@ -301,91 +329,76 @@ async def find(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def handle_history_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-
+    lang = get_lang(update, context)
     article_id = int(query.data.split(":")[1])
-    user_id = str(query.from_user.id)
-
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{API_URL}/articles/{article_id}/download",
-            params={"format": "pdf", "user_id": user_id},
-        )
-
-    if resp.status_code == 404:
-        await query.edit_message_text("❌ Стаття не знайдена.")
-        return
-
     await query.edit_message_text(
-        f"✅ Оберіть формат:",
-        reply_markup=format_keyboard(article_id),
+        t(lang, "format_pick"),
+        reply_markup=format_keyboard(article_id, lang),
     )
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text.strip()
+    lang = get_lang(update, context)
 
     if not is_valid_url(text):
-        await update.message.reply_text(
-            "Це не схоже на посилання. Надішли URL, що починається з http:// або https://"
-        )
+        await update.message.reply_text(t(lang, "not_a_url"))
         return
 
-    status = await update.message.reply_text("⏳ Завантажую сторінку…")
+    status = await update.message.reply_text(t(lang, "status_fetching"))
     user_id = str(update.effective_user.id)
 
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
                 f"{API_URL}/extract",
-                json={"url": text, "user_id": user_id, "user_type": "telegram"},
+                json={"url": text, "user_id": user_id, "user_type": "telegram", "lang": lang},
             )
 
-        if resp.status_code == 400:
-            await status.edit_text(f"⚠️ {resp.json()['detail']}")
-            return
-        if resp.status_code == 408:
-            await status.edit_text("❌ Час очікування вичерпано. Сайт відповідає надто повільно.")
+        if resp.status_code in (400, 408, 502):
+            await status.edit_text(f"⚠️ {resp.json().get('detail', 'Error.')}")
             return
         if resp.status_code >= 500:
-            await status.edit_text(f"❌ {resp.json().get('detail', 'Помилка сервера.')}")
+            await status.edit_text(t(lang, "server_error"))
             return
 
         article = resp.json()
         await status.edit_text(
-            f"✅ <b>{article['title']}</b>\n\nОберіть формат:",
+            t(lang, "article_ready", title=article["title"]),
             parse_mode="HTML",
-            reply_markup=format_keyboard(article["id"]),
+            reply_markup=format_keyboard(article["id"], lang),
         )
 
     except httpx.RequestError:
-        await status.edit_text("❌ Не вдалося зв'язатися з сервером. Спробуй ще раз.")
+        await status.edit_text(t(lang, "server_error"))
     except Exception:
         logger.exception("Unexpected error for %s", text)
-        await status.edit_text("❌ Сталася непередбачена помилка. Спробуй ще раз.")
+        await status.edit_text(t(lang, "unexpected_error"))
 
 
 async def handle_format(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+    lang = get_lang(update, context)
 
     parts = query.data.split(":")
     fmt, article_id = parts[1], int(parts[2])
     user_id = str(query.from_user.id)
 
-    await query.edit_message_text("⏳ Генерую файл…")
+    await query.edit_message_text(t(lang, "status_generating"))
 
     try:
         async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.get(
                 f"{API_URL}/articles/{article_id}/download",
-                params={"format": fmt, "user_id": user_id},
+                params={"format": fmt, "user_id": user_id, "lang": lang},
             )
 
         if resp.status_code == 404:
-            await query.edit_message_text("❌ Стаття не знайдена. Надішли посилання ще раз.")
+            await query.edit_message_text(t(lang, "article_not_found"))
             return
         if resp.status_code != 200:
-            await query.edit_message_text("❌ Помилка генерації файлу.")
+            await query.edit_message_text(t(lang, "unexpected_error"))
             return
 
         filename = "article"
@@ -405,7 +418,7 @@ async def handle_format(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     except Exception:
         logger.exception("Error downloading %s for article %d", fmt, article_id)
-        await query.edit_message_text("❌ Сталася непередбачена помилка. Спробуй ще раз.")
+        await query.edit_message_text(t(lang, "unexpected_error"))
 
 
 def main() -> None:
@@ -417,12 +430,14 @@ def main() -> None:
     app.add_handler(CommandHandler("history", history))
     app.add_handler(CommandHandler("find", find))
     app.add_handler(CommandHandler("link", link))
+    app.add_handler(CommandHandler("settings", settings))
     app.add_handler(CallbackQueryHandler(handle_history_page, pattern=r"^histpage:"))
     app.add_handler(CallbackQueryHandler(handle_history_select, pattern=r"^hist:"))
     app.add_handler(CallbackQueryHandler(handle_format, pattern=r"^fmt:"))
     app.add_handler(CallbackQueryHandler(handle_share_generate, pattern=r"^share:\d+$"))
     app.add_handler(CallbackQueryHandler(handle_share_revoke, pattern=r"^sharerevoke:"))
     app.add_handler(CallbackQueryHandler(handle_link_callback, pattern=r"^link"))
+    app.add_handler(CallbackQueryHandler(handle_setlang, pattern=r"^setlang:"))
     app.add_handler(MessageHandler(filters.Regex(r"^[A-Z0-9]{6}$"), handle_link_code))
     app.add_handler(MessageHandler(filters.Regex(r"^[A-Z0-9]{8}$"), handle_share_code))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))

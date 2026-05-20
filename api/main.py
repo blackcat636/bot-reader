@@ -14,8 +14,10 @@ from .db import (
     get_user_history, count_user_articles, search_articles, cleanup_expired_codes,
     create_link_code, preview_link, confirm_link,
     create_share_code, revoke_share_code, claim_share_code,
+    get_user_lang, set_user_lang,
 )
 from .extractor import fetch_and_extract, ExtractError
+from .i18n import t, normalize
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -53,26 +55,24 @@ class ExtractRequest(BaseModel):
     url: str
     user_id: str
     user_type: str = "browser"
+    lang: str = "en"
 
 
 @app.post("/extract")
 async def extract(req: ExtractRequest):
+    lang = normalize(req.lang)
     try:
         article = await fetch_and_extract(req.url)
     except ExtractError as e:
-        messages = {
-            "not_html": "Посилання веде не на HTML-сторінку.",
-            "no_content": "Не вдалося виділити текст — можливо, paywall або авторизація.",
-        }
-        raise HTTPException(status_code=400, detail=messages.get(str(e), str(e)))
+        raise HTTPException(status_code=400, detail=t(lang, f"err_{e}"))
     except httpx.TimeoutException:
-        raise HTTPException(status_code=408, detail="Час очікування вичерпано.")
+        raise HTTPException(status_code=408, detail=t(lang, "err_timeout"))
     except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=502, detail=f"Сервер повернув помилку: {e.response.status_code}.")
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"Не вдалося підключитися: {e}")
+        raise HTTPException(status_code=502, detail=t(lang, "err_http", code=e.response.status_code))
+    except httpx.RequestError:
+        raise HTTPException(status_code=502, detail=t(lang, "err_request"))
 
-    await get_or_create_user(req.user_id, req.user_type)
+    await get_or_create_user(req.user_id, req.user_type, lang=lang)
     article_id = await save_article(
         req.user_id, req.url, article["title"], article["content_html"]
     )
@@ -80,13 +80,17 @@ async def extract(req: ExtractRequest):
 
 
 @app.get("/articles/{article_id}/download")
-async def download(article_id: int, format: str, user_id: str):
+async def download(article_id: int, format: str, user_id: str, lang: str = "en"):
+    lang = normalize(lang)
     if format not in MEDIA_TYPES:
-        raise HTTPException(status_code=400, detail=f"Формат має бути одним з: {', '.join(MEDIA_TYPES)}")
+        raise HTTPException(
+            status_code=400,
+            detail=t(lang, "err_format_invalid", formats=", ".join(MEDIA_TYPES)),
+        )
 
     article = await get_article(article_id, user_id)
     if not article:
-        raise HTTPException(status_code=404, detail="Стаття не знайдена.")
+        raise HTTPException(status_code=404, detail=t(lang, "err_article_not_found"))
 
     try:
         data, filename = await generate_file(
@@ -94,7 +98,7 @@ async def download(article_id: int, format: str, user_id: str):
         )
     except Exception:
         logger.exception("Error generating %s for article %d", format, article_id)
-        raise HTTPException(status_code=500, detail="Помилка генерації файлу.")
+        raise HTTPException(status_code=500, detail=t(lang, "err_generate"))
 
     return Response(
         content=data,
@@ -119,31 +123,35 @@ class ShareClaimRequest(BaseModel):
     code: str
     user_id: str
     user_type: str = "browser"
+    lang: str = "en"
 
 
 @app.post("/share/generate")
-async def share_generate(article_id: int, user_id: str):
+async def share_generate(article_id: int, user_id: str, lang: str = "en"):
+    lang = normalize(lang)
     try:
         code = await create_share_code(article_id, user_id)
     except ValueError:
-        raise HTTPException(status_code=404, detail="Стаття не знайдена.")
+        raise HTTPException(status_code=404, detail=t(lang, "err_article_not_found"))
     return {"code": code}
 
 
 @app.delete("/share/{code}")
-async def share_revoke(code: str, user_id: str):
+async def share_revoke(code: str, user_id: str, lang: str = "en"):
+    lang = normalize(lang)
     revoked = await revoke_share_code(code, user_id)
     if not revoked:
-        raise HTTPException(status_code=404, detail="Код не знайдено або не належить вам.")
+        raise HTTPException(status_code=404, detail=t(lang, "err_share_not_owner"))
     return {"ok": True}
 
 
 @app.post("/share/claim")
 async def share_claim(req: ShareClaimRequest):
+    lang = normalize(req.lang)
     try:
         article = await claim_share_code(req.code, req.user_id, req.user_type)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Код не знайдено або вже використано.")
+        raise HTTPException(status_code=400, detail=t(lang, "err_share_invalid"))
     return article
 
 
@@ -151,38 +159,48 @@ class LinkConfirmRequest(BaseModel):
     code: str
     user_id: str
     user_type: str = "browser"
+    lang: str = "en"
 
 
 @app.post("/link/generate")
-async def link_generate(user_id: str, user_type: str = "browser"):
+async def link_generate(user_id: str, user_type: str = "browser", lang: str = "en"):
+    lang = normalize(lang)
     await get_or_create_user(user_id, user_type)
-    code = await create_link_code(user_id)
+    try:
+        code = await create_link_code(user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=t(lang, f"err_{e}"))
     return {"code": code, "expires_in": 600}
 
 
 @app.get("/link/preview")
-async def link_preview(code: str, user_id: str, user_type: str = "browser"):
-    errors = {
-        "invalid_code": "Код не знайдено.",
-        "expired_code": "Код застарів. Згенеруй новий.",
-        "user_not_found": "Користувача не знайдено.",
-    }
+async def link_preview(code: str, user_id: str, user_type: str = "browser", lang: str = "en"):
+    lang = normalize(lang)
     try:
         return await preview_link(code, user_id, user_type)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=errors.get(str(e), str(e)))
+        raise HTTPException(status_code=400, detail=t(lang, f"err_{e}"))
 
 
 @app.post("/link/confirm")
 async def link_confirm(req: LinkConfirmRequest):
-    errors = {
-        "invalid_code": "Код не знайдено.",
-        "expired_code": "Код застарів. Згенеруй новий.",
-        "same_group": "Ці акаунти вже пов'язані.",
-        "user_not_found": "Користувача не знайдено.",
-    }
+    lang = normalize(req.lang)
     try:
         merged = await confirm_link(req.code, req.user_id, req.user_type)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=errors.get(str(e), str(e)))
+        raise HTTPException(status_code=400, detail=t(lang, f"err_{e}"))
     return {"merged_users": merged}
+
+
+@app.get("/users/{user_id}")
+async def get_user_info(user_id: str):
+    lang = await get_user_lang(user_id)
+    return {"user_id": user_id, "lang": lang}
+
+
+@app.patch("/users/{user_id}/lang")
+async def patch_user_lang(user_id: str, lang: str, user_type: str = "browser"):
+    normalized = normalize(lang)
+    await get_or_create_user(user_id, user_type, lang=normalized)
+    await set_user_lang(user_id, normalized)
+    return {"lang": normalized}

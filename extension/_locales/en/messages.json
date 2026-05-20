@@ -1,0 +1,69 @@
+{
+  "appName": { "message": "Reader Bot" },
+  "appDescription": { "message": "Save articles as PDF, Markdown, HTML or EPUB" },
+  "statusInitial": { "message": "Choose format to save:" },
+  "btnSave": { "message": "Save" },
+  "recentHistoryLabel": { "message": "📚 Recent history" },
+  "recentHeader": {
+    "message": "📚 Recent history (total: $COUNT$)",
+    "placeholders": { "count": { "content": "$1" } }
+  },
+  "recentEmpty": { "message": "Nothing yet." },
+  "recentLoadError": { "message": "Could not load." },
+  "labelShareArticle": { "message": "Receive article from another user" },
+  "shareCodePlaceholder": { "message": "Code (8 chars)" },
+  "btnReceive": { "message": "Receive" },
+  "labelLinkAccounts": { "message": "Link to Telegram or another browser" },
+  "linkCodePlaceholder": { "message": "Code (6 chars)" },
+  "btnLink": { "message": "Link" },
+  "btnGenerateCode": { "message": "Generate code for another browser" },
+  "statusFetching": { "message": "⏳ Loading page…" },
+  "statusGenerating": { "message": "⏳ Generating file…" },
+  "statusSaved": { "message": "✅ File saved!" },
+  "errorFetchFailed": { "message": "Error loading." },
+  "errorGenerateFailed": { "message": "Error generating file." },
+  "errorApiConnect": { "message": "Could not connect to API. Check settings." },
+  "errorSetApiFirst": { "message": "Set API URL in settings first." },
+  "apiUrlSaved": { "message": "API URL saved." },
+  "errorCodeAndApi": { "message": "Enter code and API URL." },
+  "shareReceiving": { "message": "⏳ Receiving…" },
+  "shareAdded": {
+    "message": "✅ Added: «$TITLE$»",
+    "placeholders": { "title": { "content": "$1" } }
+  },
+  "linkChecking": { "message": "⏳ Checking…" },
+  "linkMerging": { "message": "⏳ Merging…" },
+  "linkMerged": {
+    "message": "✅ Done! Accounts in group: $COUNT$",
+    "placeholders": { "count": { "content": "$1" } }
+  },
+  "linkConfirmBtn": { "message": "✅ Confirm merge" },
+  "linkAlreadySame": { "message": "ℹ️ These accounts are already in the same group." },
+  "linkGenerating": { "message": "⏳ Generating code…" },
+  "linkCode": {
+    "message": "Code: $CODE$ (valid 10 min)",
+    "placeholders": { "code": { "content": "$1" } }
+  },
+  "errorApiUrl": { "message": "Enter API URL." },
+  "linkBtnDefault": { "message": "Link" },
+  "linkPreviewYour": {
+    "message": "Your group: $USERS$ account(s), $ARTICLES$ articles",
+    "placeholders": { "users": { "content": "$1" }, "articles": { "content": "$2" } }
+  },
+  "linkPreviewOther": {
+    "message": "Other group: $USERS$ account(s), $ARTICLES$ articles",
+    "placeholders": { "users": { "content": "$1" }, "articles": { "content": "$2" } }
+  },
+  "linkPreviewAfter": {
+    "message": "After merge: $USERS$ accounts, $ARTICLES$ articles",
+    "placeholders": { "users": { "content": "$1" }, "articles": { "content": "$2" } }
+  },
+  "contextMenuSave": { "message": "Save to Reader Bot" },
+  "notifSaved": {
+    "message": "Saved: «$TITLE$»",
+    "placeholders": { "title": { "content": "$1" } }
+  },
+  "notifErrorTitle": { "message": "Reader Bot — Error" },
+  "notifErrorNoApi": { "message": "Set API URL in extension settings first." },
+  "notifErrorConnect": { "message": "Could not connect to API." }
+}

@@ -23,6 +23,7 @@ async def init_db() -> None:
                 user_id TEXT NOT NULL UNIQUE,
                 type TEXT NOT NULL CHECK(type IN ('telegram', 'browser')),
                 group_id INTEGER NOT NULL REFERENCES groups(id),
+                lang TEXT NOT NULL DEFAULT 'en',
                 created_at TEXT NOT NULL
             )
         """)
@@ -81,7 +82,20 @@ async def _migrate() -> None:
             await db.commit()
 
 
-async def get_or_create_user(user_id: str, user_type: str) -> dict:
+async def get_user_lang(user_id: str) -> str:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT lang FROM users WHERE user_id = ?", (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else "en"
+
+
+async def set_user_lang(user_id: str, lang: str) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET lang = ? WHERE user_id = ?", (lang, user_id))
+        await db.commit()
+
+
+async def get_or_create_user(user_id: str, user_type: str, lang: str = "en") -> dict:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cursor:
@@ -93,8 +107,8 @@ async def get_or_create_user(user_id: str, user_type: str) -> dict:
         group_cursor = await db.execute("INSERT INTO groups (created_at) VALUES (?)", (now,))
         group_id = group_cursor.lastrowid
         await db.execute(
-            "INSERT INTO users (user_id, type, group_id, created_at) VALUES (?, ?, ?, ?)",
-            (user_id, user_type, group_id, now),
+            "INSERT INTO users (user_id, type, group_id, lang, created_at) VALUES (?, ?, ?, ?, ?)",
+            (user_id, user_type, group_id, lang, now),
         )
         await db.commit()
 

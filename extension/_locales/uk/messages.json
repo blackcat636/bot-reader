@@ -1,0 +1,69 @@
+{
+  "appName": { "message": "Reader Bot" },
+  "appDescription": { "message": "Зберігайте статті у PDF, Markdown, HTML або EPUB" },
+  "statusInitial": { "message": "Оберіть формат для збереження:" },
+  "btnSave": { "message": "Зберегти" },
+  "recentHistoryLabel": { "message": "📚 Остання історія" },
+  "recentHeader": {
+    "message": "📚 Остання історія (всього: $COUNT$)",
+    "placeholders": { "count": { "content": "$1" } }
+  },
+  "recentEmpty": { "message": "Поки порожньо." },
+  "recentLoadError": { "message": "Не вдалося завантажити." },
+  "labelShareArticle": { "message": "Отримати статтю від іншого користувача" },
+  "shareCodePlaceholder": { "message": "Код (8 символів)" },
+  "btnReceive": { "message": "Отримати" },
+  "labelLinkAccounts": { "message": "Прив'язати до Telegram або іншого браузера" },
+  "linkCodePlaceholder": { "message": "Код (6 символів)" },
+  "btnLink": { "message": "Прив'язати" },
+  "btnGenerateCode": { "message": "Згенерувати код для іншого браузера" },
+  "statusFetching": { "message": "⏳ Завантажую сторінку…" },
+  "statusGenerating": { "message": "⏳ Генерую файл…" },
+  "statusSaved": { "message": "✅ Файл збережено!" },
+  "errorFetchFailed": { "message": "Помилка при завантаженні." },
+  "errorGenerateFailed": { "message": "Помилка генерації файлу." },
+  "errorApiConnect": { "message": "Не вдалося зв'язатися з API. Перевір налаштування." },
+  "errorSetApiFirst": { "message": "Спочатку вкажи API URL в налаштуваннях." },
+  "apiUrlSaved": { "message": "API URL збережено." },
+  "errorCodeAndApi": { "message": "Вкажи код та API URL." },
+  "shareReceiving": { "message": "⏳ Отримую…" },
+  "shareAdded": {
+    "message": "✅ Додано: «$TITLE$»",
+    "placeholders": { "title": { "content": "$1" } }
+  },
+  "linkChecking": { "message": "⏳ Перевіряю…" },
+  "linkMerging": { "message": "⏳ Зливаю…" },
+  "linkMerged": {
+    "message": "✅ Готово! Акаунтів у групі: $COUNT$",
+    "placeholders": { "count": { "content": "$1" } }
+  },
+  "linkConfirmBtn": { "message": "✅ Підтвердити злиття" },
+  "linkAlreadySame": { "message": "ℹ️ Ці акаунти вже в одній групі." },
+  "linkGenerating": { "message": "⏳ Генерую код…" },
+  "linkCode": {
+    "message": "Код: $CODE$ (діє 10 хв)",
+    "placeholders": { "code": { "content": "$1" } }
+  },
+  "errorApiUrl": { "message": "Вкажи API URL." },
+  "linkBtnDefault": { "message": "Прив'язати" },
+  "linkPreviewYour": {
+    "message": "Твоя група: $USERS$ акаунт(ів), $ARTICLES$ статей",
+    "placeholders": { "users": { "content": "$1" }, "articles": { "content": "$2" } }
+  },
+  "linkPreviewOther": {
+    "message": "Інша група: $USERS$ акаунт(ів), $ARTICLES$ статей",
+    "placeholders": { "users": { "content": "$1" }, "articles": { "content": "$2" } }
+  },
+  "linkPreviewAfter": {
+    "message": "Після злиття: $USERS$ акаунти, $ARTICLES$ статей",
+    "placeholders": { "users": { "content": "$1" }, "articles": { "content": "$2" } }
+  },
+  "contextMenuSave": { "message": "Зберегти в Reader Bot" },
+  "notifSaved": {
+    "message": "Збережено: «$TITLE$»",
+    "placeholders": { "title": { "content": "$1" } }
+  },
+  "notifErrorTitle": { "message": "Reader Bot — помилка" },
+  "notifErrorNoApi": { "message": "Спочатку вкажи API URL у налаштуваннях розширення." },
+  "notifErrorConnect": { "message": "Не вдалося зв'язатися з API." }
+}

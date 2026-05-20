@@ -1,7 +1,7 @@
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
     id: "save-to-reader",
-    title: "Зберегти в Reader Bot",
+    title: chrome.i18n.getMessage("contextMenuSave"),
     contexts: ["page"],
   });
 });
@@ -15,18 +15,19 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       type: "basic",
       iconUrl: "icon48.png",
       title: "Reader Bot",
-      message: "Спочатку вкажи API URL у налаштуваннях розширення.",
+      message: chrome.i18n.getMessage("notifErrorNoApi"),
     });
     return;
   }
 
   const url = tab.url;
+  const lang = chrome.i18n.getUILanguage().split("-")[0];
 
   try {
     const resp = await fetch(`${apiUrl}/extract`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, user_id: userId, user_type: "browser" }),
+      body: JSON.stringify({ url, user_id: userId, user_type: "browser", lang }),
     });
 
     const data = await resp.json();
@@ -35,8 +36,8 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       chrome.notifications.create({
         type: "basic",
         iconUrl: "icon48.png",
-        title: "Reader Bot — помилка",
-        message: data.detail || "Не вдалося зберегти статтю.",
+        title: chrome.i18n.getMessage("notifErrorTitle"),
+        message: data.detail || chrome.i18n.getMessage("errorFetchFailed"),
       });
       return;
     }
@@ -45,7 +46,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       type: "basic",
       iconUrl: "icon48.png",
       title: "Reader Bot",
-      message: `Збережено: «${data.title}»`,
+      message: chrome.i18n.getMessage("notifSaved", [data.title]),
     });
 
     await updateBadge(apiUrl, userId);
@@ -53,8 +54,8 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     chrome.notifications.create({
       type: "basic",
       iconUrl: "icon48.png",
-      title: "Reader Bot — помилка",
-      message: "Не вдалося зв'язатися з API.",
+      title: chrome.i18n.getMessage("notifErrorTitle"),
+      message: chrome.i18n.getMessage("notifErrorConnect"),
     });
   }
 });

@@ -1,0 +1,66 @@
+{
+  "start": "Hi! Send me an article link — I'll load it in reader mode (no ads, banners, or comments) and ask which format to save it in.\n\nJust paste the URL and send.\n/history — view saved articles.\n/find {arg} — search by title.\n/link — connect Chrome extension.\n/settings — language and preferences.",
+  "not_a_url": "This doesn't look like a link. Send a URL starting with http:// or https://",
+
+  "status_fetching": "⏳ Loading page…",
+  "status_extracting": "📖 Extracting article text…",
+  "status_generating": "⏳ Generating file…",
+
+  "history_empty": "History is empty. Send an article link — I'll save it.",
+  "history_header": "Saved articles (total: {total}):",
+  "history_page": "Saved articles (total: {total}, page {page}/{pages}):",
+
+  "find_usage": "Usage: /find <i>search word</i>",
+  "find_empty": "Nothing found for «{query}».",
+  "find_header": "Search results for «{query}»:",
+
+  "format_pdf": "📄 PDF",
+  "format_md": "📝 Markdown",
+  "format_html": "🌐 HTML",
+  "format_epub": "📚 EPUB",
+  "format_share": "📤 Share",
+
+  "article_not_found": "❌ Article not found. Send the link again.",
+  "server_error": "❌ Could not reach the server. Try again.",
+  "unexpected_error": "❌ An unexpected error occurred. Try again.",
+
+  "link_generated": "🔗 Code to connect the extension:\n\n<code>{code}</code>\n\nEnter it in the Chrome extension settings. Valid for 10 minutes.\n\nOr send me a 6-character code from the extension to connect it to your account.",
+  "link_generate_error": "❌ Could not generate code. Try again.",
+  "link_preview": "🔗 <b>Merge preview</b>\n\nYour group: {your_users} account(s), {your_articles} articles\nOther group: {code_users} account(s), {code_articles} articles\n\nAfter merge: <b>{total_users} accounts, {total_articles} articles</b>\n\nAll articles will become shared. Continue?",
+  "link_already_same": "ℹ️ These accounts are already in the same group.",
+  "link_confirm_btn": "✅ Yes, merge",
+  "link_cancel_btn": "❌ Cancel",
+  "link_cancelled": "Cancelled.",
+  "link_merged": "✅ Done! Accounts in group: {count}.",
+
+  "share_generated": "📤 Article transfer code:\n\n<code>{code}</code>\n\nSend it to another user. One-time code — valid until used.",
+  "share_revoke_btn": "❌ Cancel code",
+  "share_revoked": "✅ Code cancelled.",
+  "share_revoke_error": "❌ Code already used or not found.",
+  "share_received": "✅ Article added to your history!\n\n<b>{title}</b>\n\nChoose format:",
+
+  "settings_prompt": "🌐 Choose language:",
+  "settings_lang_set": "✅ Language set to English.",
+
+  "err_not_html": "The link leads to a non-HTML page (possibly an image or file).",
+  "err_no_content": "Could not extract article text — possibly paywalled or requires login.",
+  "err_timeout": "Request timed out. The site is responding too slowly.",
+  "err_http": "Server returned an error: {code}.",
+  "err_request": "Could not connect to the site.",
+  "err_article_not_found": "Article not found.",
+  "err_format_invalid": "Format must be one of: {formats}.",
+  "err_generate": "Error generating file.",
+  "err_invalid_code": "Code not found.",
+  "err_expired_code": "Code has expired. Generate a new one.",
+  "err_same_group": "These accounts are already linked.",
+  "err_user_not_found": "User not found.",
+  "err_share_invalid": "Code not found or already used.",
+  "err_share_not_owner": "Code not found or does not belong to you.",
+
+  "article_ready": "✅ <b>{title}</b>\n\nChoose format:",
+  "format_pick": "✅ Choose format:",
+  "nav_prev": "◀️ Back",
+  "nav_next": "▶️ Next",
+  "settings_lang_en": "🇬🇧 English",
+  "settings_lang_uk": "🇺🇦 Українська"
+}

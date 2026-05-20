@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="uk">
+<html>
 <head>
   <meta charset="utf-8">
   <style>
@@ -63,7 +63,7 @@
 <body>
   <h1>📖 Reader Bot</h1>
   <div id="url"></div>
-  <div id="status">Оберіть формат для збереження:</div>
+  <div id="status" data-i18n="statusInitial"></div>
   <div class="buttons">
     <button data-fmt="pdf">📄 PDF</button>
     <button data-fmt="md">📝 Markdown</button>
@@ -73,31 +73,30 @@
   <div id="settings">
     <label>API URL</label>
     <input id="api-url-input" type="text" placeholder="https://your-domain.com">
-    <button id="save-btn">Зберегти</button>
+    <button id="save-btn" data-i18n="btnSave"></button>
   </div>
   <div id="recent-section">
-    <div id="recent-header" style="font-size:11px;color:#888;margin-bottom:4px">📚 Остання історія</div>
+    <div id="recent-header" style="font-size:11px;color:#888;margin-bottom:4px" data-i18n="recentHistoryLabel"></div>
     <div id="recent-list" style="font-size:11px;color:#555"></div>
   </div>
   <div id="share-section">
-    <label>Отримати статтю від іншого користувача</label>
+    <label data-i18n="labelShareArticle"></label>
     <div style="display:flex;gap:6px;margin-top:4px">
-      <input id="share-code-input" type="text" placeholder="Код (8 символів)"
+      <input id="share-code-input" type="text" data-i18n-placeholder="shareCodePlaceholder"
         style="flex:1;font-size:11px;padding:4px 6px;border:1px solid #ddd;border-radius:4px;text-transform:uppercase">
-      <button id="share-claim-btn" style="font-size:11px;padding:4px 8px">Отримати</button>
+      <button id="share-claim-btn" style="font-size:11px;padding:4px 8px" data-i18n="btnReceive"></button>
     </div>
     <div id="share-status" style="font-size:11px;color:#555;margin-top:4px;min-height:16px"></div>
   </div>
   <div id="link-section">
-    <label>Прив'язати до Telegram або іншого браузера</label>
+    <label data-i18n="labelLinkAccounts"></label>
     <div style="display:flex;gap:6px;margin-top:4px">
-      <input id="link-code-input" type="text" placeholder="Код (6 символів)"
+      <input id="link-code-input" type="text" data-i18n-placeholder="linkCodePlaceholder"
         style="flex:1;font-size:11px;padding:4px 6px;border:1px solid #ddd;border-radius:4px;text-transform:uppercase">
-      <button id="link-confirm-btn" style="font-size:11px;padding:4px 8px">Прив'язати</button>
+      <button id="link-confirm-btn" style="font-size:11px;padding:4px 8px" data-i18n="linkBtnDefault"></button>
     </div>
-    <button id="link-generate-btn" style="margin-top:6px;width:100%;font-size:11px;padding:4px;background:#f0f0f0">
-      Згенерувати код для іншого браузера
-    </button>
+    <button id="link-generate-btn" style="margin-top:6px;width:100%;font-size:11px;padding:4px;background:#f0f0f0"
+      data-i18n="btnGenerateCode"></button>
     <div id="link-status" style="font-size:11px;color:#555;margin-top:4px;min-height:16px"></div>
   </div>
   <script src="popup.js"></script>
