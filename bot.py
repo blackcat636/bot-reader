@@ -27,6 +27,68 @@ logging.basicConfig(
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
+READER_CSS_STRING = """
+body {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 15px;
+    line-height: 1.7;
+    color: #1a1a1a;
+    max-width: 720px;
+    margin: 40px auto;
+    padding: 0 20px;
+}
+h1 {
+    font-size: 26px;
+    font-weight: bold;
+    line-height: 1.3;
+    margin: 0 0 8px 0;
+    color: #111;
+}
+h2 { font-size: 20px; margin-top: 32px; margin-bottom: 8px; color: #222; }
+h3 { font-size: 17px; margin-top: 24px; margin-bottom: 6px; color: #333; }
+.source {
+    font-size: 12px;
+    color: #777;
+    margin-bottom: 28px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #ddd;
+    word-break: break-all;
+}
+.source a { color: #555; }
+p { margin: 0 0 14px 0; }
+img { max-width: 100%; height: auto; display: block; margin: 16px auto; }
+a { color: #1a5fa8; }
+blockquote {
+    border-left: 3px solid #ccc;
+    margin: 16px 0;
+    padding: 4px 0 4px 16px;
+    color: #555;
+    font-style: italic;
+}
+pre {
+    background: #f5f5f5;
+    padding: 12px;
+    border-radius: 4px;
+    font-size: 13px;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+code {
+    font-family: "Courier New", monospace;
+    font-size: 13px;
+    background: #f5f5f5;
+    padding: 1px 4px;
+    border-radius: 2px;
+}
+ul, ol { margin: 0 0 14px 0; padding-left: 24px; }
+li { margin-bottom: 4px; }
+figure { margin: 16px 0; text-align: center; }
+figcaption { font-size: 12px; color: #777; margin-top: 6px; }
+table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 13px; }
+th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; }
+th { background: #f0f0f0; font-weight: bold; }
+"""
+
 READER_CSS = CSS(string="""
 @page {
     margin: 2.5cm 2cm;
@@ -144,12 +206,14 @@ def safe_filename(title: str, ext: str, max_len: int = 60) -> str:
     return (name[:max_len] or "article") + ext
 
 
-def build_page_html(title: str, url: str, content_html: str) -> str:
+def build_page_html(title: str, url: str, content_html: str, inline_css: str = "") -> str:
+    style_block = f"<style>{inline_css}</style>" if inline_css else ""
     return f"""<!DOCTYPE html>
 <html lang="uk">
 <head>
 <meta charset="utf-8">
 <title>{title}</title>
+{style_block}
 </head>
 <body>
 <h1>{title}</h1>
@@ -290,7 +354,7 @@ async def handle_format(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             caption = f"📚 {title}"
 
         else:  # html
-            page_html = build_page_html(title, url, content_html)
+            page_html = build_page_html(title, url, content_html, inline_css=READER_CSS_STRING)
             with tempfile.NamedTemporaryFile(suffix=".html", delete=False, mode="w", encoding="utf-8") as tmp:
                 tmp_path = tmp.name
                 tmp.write(page_html)
