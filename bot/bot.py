@@ -61,6 +61,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(t(lang, "start"), parse_mode="HTML")
 
 
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    lang = get_lang(update, context)
+    await update.message.reply_text(t(lang, "help"), parse_mode="HTML")
+
+
 async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lang = get_lang(update, context)
     await update.message.reply_text(
@@ -441,6 +446,7 @@ def main() -> None:
 
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("history", history))
     app.add_handler(CommandHandler("find", find))
     app.add_handler(CommandHandler("link", link))
