@@ -7,3 +7,5 @@ html2text
 aiosqlite
 ebooklib
 weasyprint
+fastapi
+uvicorn[standard]

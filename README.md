@@ -1,54 +1,116 @@
-# Telegram Reader Bot
+# Telegram Reader Bot + Chrome Extension
 
-Бот отримує посилання на статтю і повертає її у форматі PDF — без реклами, банерів, спливаючих вікон і коментарів (режим читача).
+Сервіс для читання статей без реклами, банерів і коментарів. Використовує алгоритм Mozilla Readability і повертає чистий файл у форматі PDF, Markdown, HTML або EPUB.
 
-## Можливості
+Складається з двох клієнтів на спільному FastAPI бекенді:
+- **Telegram бот** — надішли URL, отримай файл
+- **Chrome розширення** — кнопка прямо на сторінці
 
-- Виділення тексту статті через алгоритм Mozilla Readability (той самий, що у Firefox Reader View)
-- Генерація PDF з чистою типографікою: шрифт Georgia, береги, нумерація сторінок
-- Назва файлу PDF відповідає заголовку статті
-- Повідомлення про помилки: недоступний сайт, paywall, не-HTML сторінки
+---
+
+## Структура проекту
+
+```
+reader-bot/
+├── api/                    # FastAPI бекенд
+│   ├── main.py             # Endpoints
+│   ├── extractor.py        # fetch + Mozilla Readability
+│   ├── converter.py        # PDF / MD / HTML / EPUB
+│   └── db.py               # SQLite (aiosqlite)
+├── bot/
+│   └── bot.py              # Telegram бот (HTTP клієнт до API)
+├── extension/
+│   ├── manifest.json       # Chrome Extension Manifest V3
+│   ├── popup.html
+│   └── popup.js
+├── data/                   # SQLite БД (монтується як volume)
+├── Dockerfile
+├── docker-compose.yml
+└── .env.example
+```
 
 ---
 
 ## Запуск
 
-### Docker (рекомендовано)
+### 1. Налаштування
 
 ```bash
 cp .env.example .env
-# Відредагувати .env — вписати токен
+# Відредагувати .env — обов'язково вписати BOT_TOKEN
+```
 
+### 2. Стандартний запуск (без тунелю)
+
+```bash
 docker compose up -d --build
 ```
 
-Корисні команди:
+Запускається два контейнери: `api` (порт 8000, тільки всередині Docker-мережі) і `bot`.
 
-```bash
-docker compose logs -f     # логи в реальному часі
-docker compose restart     # перезапуск
-docker compose down        # зупинка
+### 3. З Cloudflare Tunnel
+
+Якщо немає публічного IP або потрібен HTTPS без налаштування nginx:
+
+1. Створити тунель у [Cloudflare Zero Trust](https://one.dash.cloudflare.com/) → Networks → Tunnels
+2. Додати маршрут: `http://api:8000`
+3. Скопіювати токен тунелю в `.env`:
+
+```env
+CLOUDFLARE_TUNNEL_TOKEN=your_token_here
 ```
 
-### Без Docker
+4. Запустити з профілем `tunnel`:
 
 ```bash
-# Системні залежності (Debian/Ubuntu)
-sudo apt-get install -y libcairo2 libpango-1.0-0 libpangocairo-1.0-0 \
-    libgdk-pixbuf-2.0-0 fonts-liberation fonts-dejavu-core
-
-pip install -r requirements.txt
-cp .env.example .env
-python bot.py
+docker compose --profile tunnel up -d --build
 ```
+
+### 4. З власним доменом через nginx-proxy
+
+Якщо на сервері вже працює [jwilder/nginx-proxy](https://github.com/nginx-proxy/nginx-proxy):
+
+```env
+API_DOMAIN=reader.your-domain.com
+```
+
+`VIRTUAL_HOST` і `LETSENCRYPT_HOST` підхоплюються автоматично.
 
 ---
 
 ## Конфігурація `.env`
 
-| Змінна | Обовʼязкова | Опис |
+| Змінна | Обов'язкова | Опис |
 |---|---|---|
 | `BOT_TOKEN` | ✅ | Токен від [@BotFather](https://t.me/BotFather) |
+| `DB_PATH` | — | Шлях до SQLite (за замовчуванням `/app/data/articles.db`) |
+| `API_DOMAIN` | — | Домен для nginx-proxy + Let's Encrypt |
+| `CLOUDFLARE_TUNNEL_TOKEN` | — | Токен Cloudflare Tunnel |
+
+---
+
+## API
+
+Доступний всередині Docker-мережі на `http://api:8000`. При підключеному домені або тунелі — публічно.
+
+| Метод | Endpoint | Опис |
+|---|---|---|
+| `POST` | `/extract` | Завантажити статтю, зберегти в БД |
+| `GET` | `/articles/{id}/download?format=pdf\|md\|html\|epub&user_id=` | Скачати файл |
+| `GET` | `/history?user_id=` | Остання 10 статей |
+
+### Приклад
+
+```bash
+# Завантажити статтю
+curl -X POST https://reader.your-domain.com/extract \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://habr.com/ru/articles/123/", "user_id": "test"}'
+# → {"id": 1, "title": "...", "url": "..."}
+
+# Скачати PDF
+curl "https://reader.your-domain.com/articles/1/download?format=pdf&user_id=test" -o article.pdf
+```
 
 ---
 
@@ -57,60 +119,50 @@ python bot.py
 | Команда / дія | Опис |
 |---|---|
 | `/start` | Привітання та інструкція |
-| Будь-який текст з URL | Завантажити статтю і повернути PDF |
+| `/history` | Список збережених статей для повторної конвертації |
+| Будь-який текст з URL | Завантажити статтю, обрати формат |
 
 ---
 
-## Флоу
+## Chrome розширення
 
-```
-Користувач надсилає URL
-  └─► Бот завантажує сторінку (httpx)
-        └─► readability-lxml виділяє чистий HTML
-              └─► weasyprint рендерить PDF
-                    └─► Бот надсилає PDF-файл
-```
+Встановлення як unpacked:
 
----
+1. Відкрити `chrome://extensions`
+2. Увімкнути **Developer mode**
+3. **Load unpacked** → обрати папку `extension/`
+4. У popup розширення вказати **API URL** (наприклад `https://reader.your-domain.com`)
 
-## Обмеження
-
-| Ситуація | Що станеться |
-|---|---|
-| Paywall / авторизація | Бот повідомить, що не вдалося виділити текст |
-| SPA на React/Vue без SSR | Контент може бути порожній — JS не виконується |
-| Сайт блокує запити | Помилка HTTP або порожній вміст |
-| Не-HTML посилання (PDF, зображення) | Бот повідомить про невідповідний тип контенту |
-| Сайт відповідає більше 30 с | Timeout з повідомленням |
+При першому запуску генерується UUID користувача і зберігається в `chrome.storage.local`.
 
 ---
 
-## Структура проекту
+## Корисні команди Docker
 
-```
-reader-bot/
-├── bot.py              # Основний код бота
-├── Dockerfile
-├── docker-compose.yml
-├── .env                # Конфігурація (не комітити)
-├── .env.example        # Приклад конфігурації
-├── requirements.txt    # Залежності
-└── README.md
+```bash
+docker compose logs -f                        # логи всіх сервісів
+docker compose logs -f api                    # логи тільки API
+docker compose restart api                    # перезапустити API
+docker compose --profile tunnel up -d         # запуск з тунелем
+docker compose down                           # зупинка
 ```
 
 ---
 
 ## Залежності
 
-| Пакет | Версія | Призначення |
-|---|---|---|
-| `python-telegram-bot` | 21.9 | Telegram Bot API |
-| `httpx` | 0.27.2 | Завантаження сторінок |
-| `readability-lxml` | 0.8.1 | Виділення тексту статті (Mozilla Readability) |
-| `weasyprint` | 62.3 | Рендеринг HTML → PDF |
-| `python-dotenv` | 1.0.1 | Читання `.env` файлу |
+| Пакет | Призначення |
+|---|---|
+| `fastapi` + `uvicorn` | HTTP API |
+| `python-telegram-bot` | Telegram Bot API |
+| `httpx` | Завантаження сторінок |
+| `readability-lxml` | Mozilla Readability — виділення тексту |
+| `weasyprint` | HTML → PDF |
+| `html2text` | HTML → Markdown |
+| `ebooklib` | Генерація EPUB |
+| `aiosqlite` | Асинхронна робота з SQLite |
 
-### Системні залежності (встановлюються у Dockerfile)
+### Системні залежності (у Dockerfile)
 
 `libcairo2`, `libpango`, `libgdk-pixbuf` — рендеринг для weasyprint.  
-`fonts-liberation`, `fonts-dejavu-core` — базові шрифти для PDF.
+`fonts-liberation`, `fonts-dejavu-core` — шрифти для PDF.
