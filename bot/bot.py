@@ -45,6 +45,9 @@ def format_keyboard(article_id: int, lang: str = "en") -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(t(lang, "format_share"), callback_data=f"share:{article_id}"),
         ],
+        [
+            InlineKeyboardButton(t(lang, "format_delete"), callback_data=f"del:{article_id}"),
+        ],
     ])
 
 
@@ -75,6 +78,90 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             InlineKeyboardButton(t(lang, "settings_lang_uk"), callback_data="setlang:uk"),
         ]])
     )
+
+
+async def handle_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(update, context)
+    article_id = int(query.data.split(":")[1])
+    user_id = str(query.from_user.id)
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{API_URL}/articles/{article_id}",
+            params={"user_id": user_id, "lang": lang},
+        )
+
+    if resp.status_code == 404:
+        await query.edit_message_text(t(lang, "article_not_found"))
+        return
+
+    title = resp.json()["title"]
+    await query.edit_message_text(
+        t(lang, "delete_confirm", title=title),
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton(t(lang, "delete_confirm_btn"), callback_data=f"delconfirm:{article_id}"),
+            InlineKeyboardButton(t(lang, "link_cancel_btn"), callback_data=f"delcancel:{article_id}"),
+        ]]),
+    )
+
+
+async def handle_delete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(update, context)
+    article_id = int(query.data.split(":")[1])
+    user_id = str(query.from_user.id)
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.delete(
+            f"{API_URL}/articles/{article_id}",
+            params={"user_id": user_id, "lang": lang},
+        )
+
+    if resp.status_code == 200:
+        await query.edit_message_text(t(lang, "delete_done"))
+    else:
+        await query.edit_message_text(t(lang, "article_not_found"))
+
+
+async def handle_delete_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(update, context)
+    article_id = int(query.data.split(":")[1])
+    user_id = str(query.from_user.id)
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{API_URL}/articles/{article_id}",
+            params={"user_id": user_id, "lang": lang},
+        )
+
+    if resp.status_code == 404:
+        await query.edit_message_text(t(lang, "article_not_found"))
+        return
+
+    article = resp.json()
+    await query.edit_message_text(
+        t(lang, "article_ready", title=article["title"]),
+        parse_mode="HTML",
+        reply_markup=format_keyboard(article_id, lang),
+    )
+
+
+async def _clear_awaiting_states(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data.pop("awaiting_search", None)
+
+
+async def handle_findcancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    context.user_data.pop("awaiting_search", None)
+    lang = get_lang(update, context)
+    await query.edit_message_text(t(lang, "link_cancelled"))
 
 
 async def handle_setlang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -303,13 +390,7 @@ async def handle_history_page(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 
-async def find(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    lang = get_lang(update, context)
-    query_text = " ".join(context.args).strip() if context.args else ""
-    if not query_text:
-        await update.message.reply_text(t(lang, "find_usage"), parse_mode="HTML")
-        return
-
+async def _do_search(update: Update, lang: str, query_text: str) -> None:
     user_id = str(update.effective_user.id)
     async with httpx.AsyncClient() as client:
         resp = await client.get(f"{API_URL}/search", params={"user_id": user_id, "q": query_text})
@@ -328,6 +409,21 @@ async def find(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         t(lang, "find_header", query=query_text),
         reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
+async def find(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    lang = get_lang(update, context)
+    query_text = " ".join(context.args).strip() if context.args else ""
+    if query_text:
+        await _do_search(update, lang, query_text)
+        return
+    context.user_data["awaiting_search"] = True
+    await update.message.reply_text(
+        t(lang, "find_prompt"),
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton(t(lang, "link_cancel_btn"), callback_data="findcancel"),
+        ]]),
     )
 
 
@@ -359,6 +455,10 @@ async def handle_history_select(update: Update, context: ContextTypes.DEFAULT_TY
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text.strip()
     lang = get_lang(update, context)
+
+    if context.user_data.pop("awaiting_search", False):
+        await _do_search(update, lang, text)
+        return
 
     if not is_valid_url(text):
         await update.message.reply_text(t(lang, "not_a_url"))
@@ -445,6 +545,7 @@ def main() -> None:
         raise RuntimeError("BOT_TOKEN is not set")
 
     app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(MessageHandler(filters.COMMAND, _clear_awaiting_states), group=-1)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("history", history))
@@ -454,9 +555,13 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(handle_history_page, pattern=r"^histpage:"))
     app.add_handler(CallbackQueryHandler(handle_history_select, pattern=r"^hist:"))
     app.add_handler(CallbackQueryHandler(handle_format, pattern=r"^fmt:"))
+    app.add_handler(CallbackQueryHandler(handle_delete, pattern=r"^del:\d+$"))
+    app.add_handler(CallbackQueryHandler(handle_delete_confirm, pattern=r"^delconfirm:"))
+    app.add_handler(CallbackQueryHandler(handle_delete_cancel, pattern=r"^delcancel:"))
     app.add_handler(CallbackQueryHandler(handle_share_generate, pattern=r"^share:\d+$"))
     app.add_handler(CallbackQueryHandler(handle_share_revoke, pattern=r"^sharerevoke:"))
     app.add_handler(CallbackQueryHandler(handle_link_callback, pattern=r"^link"))
+    app.add_handler(CallbackQueryHandler(handle_findcancel, pattern=r"^findcancel$"))
     app.add_handler(CallbackQueryHandler(handle_setlang, pattern=r"^setlang:"))
     app.add_handler(MessageHandler(filters.Regex(r"^[A-Z0-9]{6}$"), handle_link_code))
     app.add_handler(MessageHandler(filters.Regex(r"^[A-Z0-9]{8}$"), handle_share_code))

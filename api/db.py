@@ -121,6 +121,23 @@ async def get_or_create_user(user_id: str, user_type: str, lang: str = "en") -> 
             return dict(await cursor.fetchone())
 
 
+async def delete_article(article_id: int, user_id: str) -> bool:
+    """Видаляє статтю якщо вона в тій самій групі що й user_id."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            DELETE FROM articles WHERE id = ?
+              AND user_id IN (
+                SELECT user_id FROM users
+                WHERE group_id = (SELECT group_id FROM users WHERE user_id = ?)
+              )
+            """,
+            (article_id, user_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
 async def get_article_by_url(user_id: str, url: str) -> dict | None:
     """Повертає існуючу статтю з тим самим URL у групі user_id, якщо є."""
     async with aiosqlite.connect(DB_PATH) as db:
@@ -204,12 +221,13 @@ async def search_articles(user_id: str, query: str, limit: int = 10) -> list[dic
             FROM articles a
             JOIN users u ON u.user_id = a.user_id
             WHERE u.group_id = (SELECT group_id FROM users WHERE user_id = ?)
-              AND a.title LIKE ?
-            ORDER BY a.created_at DESC LIMIT ?
+            ORDER BY a.created_at DESC
             """,
-            (user_id, f"%{query}%", limit),
+            (user_id,),
         ) as cursor:
-            return [dict(r) for r in await cursor.fetchall()]
+            rows = await cursor.fetchall()
+    q = query.lower()
+    return [dict(r) for r in rows if q in r["title"].lower()][:limit]
 
 
 async def cleanup_expired_codes() -> int:

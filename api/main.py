@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from .converter import generate_file, MEDIA_TYPES
 from .db import (
-    init_db, get_or_create_user, save_article, get_article, get_article_by_url,
+    init_db, get_or_create_user, save_article, get_article, get_article_by_url, delete_article,
     get_user_history, count_user_articles, search_articles, cleanup_expired_codes,
     create_link_code, preview_link, confirm_link,
     create_share_code, revoke_share_code, claim_share_code,
@@ -97,6 +97,15 @@ async def get_article_info(article_id: int, user_id: str, lang: str = "en"):
         "url": article["url"],
         "created_at": article["created_at"],
     }
+
+
+@app.delete("/articles/{article_id}")
+async def delete_article_endpoint(article_id: int, user_id: str, lang: str = "en"):
+    lang = normalize(lang)
+    deleted = await delete_article(article_id, user_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=t(lang, "err_article_not_found"))
+    return {"ok": True}
 
 
 @app.get("/articles/{article_id}/download")
