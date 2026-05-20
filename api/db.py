@@ -81,6 +81,10 @@ async def _migrate() -> None:
                 )
             await db.commit()
 
+        if "lang" not in columns:
+            await db.execute("ALTER TABLE users ADD COLUMN lang TEXT NOT NULL DEFAULT 'en'")
+            await db.commit()
+
 
 async def get_user_lang(user_id: str) -> str:
     async with aiosqlite.connect(DB_PATH) as db:
