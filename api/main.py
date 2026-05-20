@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from urllib.parse import quote
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -119,10 +120,12 @@ async def download(article_id: int, format: str, user_id: str, lang: str = "en")
         logger.exception("Error generating %s for article %d", format, article_id)
         raise HTTPException(status_code=500, detail=t(lang, "err_generate"))
 
+    ascii_name = filename.encode("ascii", "ignore").decode("ascii") or "article"
+    encoded_name = quote(filename, safe="")
     return Response(
         content=data,
         media_type=MEDIA_TYPES[format],
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{encoded_name}'},
     )
 
 
