@@ -53,6 +53,7 @@ async def init_db() -> None:
             )
         """)
         await db.execute("CREATE INDEX IF NOT EXISTS idx_articles_user_id ON articles(user_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_articles_url ON articles(url)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_users_group_id ON users(group_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_users_user_id ON users(user_id)")
         await db.commit()
@@ -118,6 +119,24 @@ async def get_or_create_user(user_id: str, user_type: str, lang: str = "en") -> 
 
         async with db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cursor:
             return dict(await cursor.fetchone())
+
+
+async def get_article_by_url(user_id: str, url: str) -> dict | None:
+    """Повертає існуючу статтю з тим самим URL у групі user_id, якщо є."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT a.id, a.title, a.url, a.created_at FROM articles a
+            JOIN users u ON u.user_id = a.user_id
+            WHERE a.url = ?
+              AND u.group_id = (SELECT group_id FROM users WHERE user_id = ?)
+            LIMIT 1
+            """,
+            (url, user_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
 
 
 async def save_article(user_id: str, url: str, title: str, content_html: str) -> int:
@@ -243,7 +262,19 @@ async def claim_share_code(code: str, user_id: str, user_type: str) -> dict:
             row = dict(row)
 
         await get_or_create_user(user_id, user_type)
-        new_id = await save_article(user_id, row["url"], row["title"], row["content_html"])
+
+        async with db.execute(
+            """SELECT a.id FROM articles a
+               JOIN users u ON u.user_id = a.user_id
+               WHERE a.url = ? AND u.group_id = (SELECT group_id FROM users WHERE user_id = ?)""",
+            (row["url"], user_id),
+        ) as c:
+            existing = await c.fetchone()
+
+        if existing:
+            new_id = existing[0]
+        else:
+            new_id = await save_article(user_id, row["url"], row["title"], row["content_html"])
 
         await db.execute("DELETE FROM share_codes WHERE code = ?", (code,))
         await db.commit()

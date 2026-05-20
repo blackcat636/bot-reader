@@ -331,8 +331,22 @@ async def handle_history_select(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
     lang = get_lang(update, context)
     article_id = int(query.data.split(":")[1])
+    user_id = str(query.from_user.id)
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{API_URL}/articles/{article_id}",
+            params={"user_id": user_id, "lang": lang},
+        )
+
+    if resp.status_code == 404:
+        await query.edit_message_text(t(lang, "article_not_found"))
+        return
+
+    article = resp.json()
     await query.edit_message_text(
-        t(lang, "format_pick"),
+        t(lang, "article_ready", title=article["title"]),
+        parse_mode="HTML",
         reply_markup=format_keyboard(article_id, lang),
     )
 

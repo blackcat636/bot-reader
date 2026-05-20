@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from .converter import generate_file, MEDIA_TYPES
 from .db import (
-    init_db, get_or_create_user, save_article, get_article,
+    init_db, get_or_create_user, save_article, get_article, get_article_by_url,
     get_user_history, count_user_articles, search_articles, cleanup_expired_codes,
     create_link_code, preview_link, confirm_link,
     create_share_code, revoke_share_code, claim_share_code,
@@ -61,6 +61,12 @@ class ExtractRequest(BaseModel):
 @app.post("/extract")
 async def extract(req: ExtractRequest):
     lang = normalize(req.lang)
+    await get_or_create_user(req.user_id, req.user_type, lang=lang)
+
+    existing = await get_article_by_url(req.user_id, req.url)
+    if existing:
+        return {"id": existing["id"], "title": existing["title"], "url": req.url}
+
     try:
         article = await fetch_and_extract(req.url)
     except ExtractError as e:
@@ -72,11 +78,24 @@ async def extract(req: ExtractRequest):
     except httpx.RequestError:
         raise HTTPException(status_code=502, detail=t(lang, "err_request"))
 
-    await get_or_create_user(req.user_id, req.user_type, lang=lang)
     article_id = await save_article(
         req.user_id, req.url, article["title"], article["content_html"]
     )
     return {"id": article_id, "title": article["title"], "url": req.url}
+
+
+@app.get("/articles/{article_id}")
+async def get_article_info(article_id: int, user_id: str, lang: str = "en"):
+    lang = normalize(lang)
+    article = await get_article(article_id, user_id)
+    if not article:
+        raise HTTPException(status_code=404, detail=t(lang, "err_article_not_found"))
+    return {
+        "id": article["id"],
+        "title": article["title"],
+        "url": article["url"],
+        "created_at": article["created_at"],
+    }
 
 
 @app.get("/articles/{article_id}/download")
