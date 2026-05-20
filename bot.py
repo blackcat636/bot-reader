@@ -4,11 +4,16 @@ import re
 import tempfile
 from urllib.parse import urlparse
 
+import html2text
 import httpx
+from ebooklib import epub
 from dotenv import load_dotenv
 from readability import Document
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler,
+    CallbackQueryHandler, filters, ContextTypes,
+)
 from weasyprint import HTML, CSS
 
 load_dotenv()
@@ -19,6 +24,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 READER_CSS = CSS(string="""
@@ -75,7 +81,6 @@ pre {
     padding: 12px;
     border-radius: 4px;
     font-size: 11px;
-    overflow-x: auto;
     white-space: pre-wrap;
     word-break: break-all;
 }
@@ -113,6 +118,17 @@ FETCH_HEADERS = {
     "Accept-Language": "uk,en-US;q=0.9,en;q=0.8",
 }
 
+FORMAT_KEYBOARD = InlineKeyboardMarkup([
+    [
+        InlineKeyboardButton("📄 PDF", callback_data="fmt:pdf"),
+        InlineKeyboardButton("📝 Markdown", callback_data="fmt:md"),
+    ],
+    [
+        InlineKeyboardButton("🌐 HTML", callback_data="fmt:html"),
+        InlineKeyboardButton("📚 EPUB", callback_data="fmt:epub"),
+    ],
+])
+
 
 def is_valid_url(text: str) -> bool:
     try:
@@ -122,16 +138,31 @@ def is_valid_url(text: str) -> bool:
         return False
 
 
-def safe_filename(title: str, max_len: int = 60) -> str:
+def safe_filename(title: str, ext: str, max_len: int = 60) -> str:
     name = re.sub(r'[^\w\s\-]', '', title, flags=re.UNICODE)
     name = re.sub(r'\s+', '_', name.strip())
-    return (name[:max_len] or "article") + ".pdf"
+    return (name[:max_len] or "article") + ext
+
+
+def build_page_html(title: str, url: str, content_html: str) -> str:
+    return f"""<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<title>{title}</title>
+</head>
+<body>
+<h1>{title}</h1>
+<p class="source">Джерело: <a href="{url}">{url}</a></p>
+{content_html}
+</body>
+</html>"""
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "Привіт! Надішли мені посилання на статтю — я прочитаю її в режимі читача "
-        "(без реклами, банерів і коментарів) та поверну чистий PDF.\n\n"
+        "Привіт! Надішли мені посилання на статтю — я завантажу її в режимі читача "
+        "(без реклами, банерів і коментарів) і запитаю, у якому форматі зберегти.\n\n"
         "Просто вставте URL і надішліть."
     )
 
@@ -147,7 +178,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     status = await update.message.reply_text("⏳ Завантажую сторінку…")
 
-    pdf_path = None
     try:
         async with httpx.AsyncClient(
             follow_redirects=True,
@@ -175,37 +205,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
             return
 
-        await status.edit_text("🖨 Генерую PDF…")
+        context.user_data["article"] = {
+            "url": text,
+            "title": title,
+            "content_html": content_html,
+        }
 
-        page_html = f"""<!DOCTYPE html>
-<html lang="uk">
-<head>
-<meta charset="utf-8">
-<title>{title}</title>
-</head>
-<body>
-<h1>{title}</h1>
-<p class="source">Джерело: <a href="{text}">{text}</a></p>
-{content_html}
-</body>
-</html>"""
-
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            pdf_path = tmp.name
-
-        HTML(string=page_html, base_url=text).write_pdf(
-            pdf_path,
-            stylesheets=[READER_CSS],
-            presentational_hints=True,
+        await status.edit_text(
+            f"✅ <b>{title}</b>\n\nОберіть формат:",
+            parse_mode="HTML",
+            reply_markup=FORMAT_KEYBOARD,
         )
-
-        await status.delete()
-        with open(pdf_path, "rb") as f:
-            await update.message.reply_document(
-                document=f,
-                filename=safe_filename(title),
-                caption=f"📄 {title}",
-            )
 
     except httpx.TimeoutException:
         await status.edit_text("❌ Час очікування вичерпано. Сайт відповідає надто повільно.")
@@ -214,12 +224,94 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except httpx.RequestError as e:
         await status.edit_text(f"❌ Не вдалося підключитися до сайту: {e}")
     except Exception:
-        logger.exception("Unexpected error while processing %s", text)
+        logger.exception("Unexpected error while fetching %s", text)
         await status.edit_text("❌ Сталася непередбачена помилка. Спробуй ще раз.")
+
+
+async def handle_format(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    article = context.user_data.get("article")
+    if not article:
+        await query.edit_message_text("❌ Сесія застаріла. Надішли посилання ще раз.")
+        return
+
+    fmt = query.data.split(":")[1]
+    url = article["url"]
+    title = article["title"]
+    content_html = article["content_html"]
+
+    await query.edit_message_text("⏳ Генерую файл…")
+
+    tmp_path = None
+    try:
+        if fmt == "pdf":
+            page_html = build_page_html(title, url, content_html)
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                tmp_path = tmp.name
+            HTML(string=page_html, base_url=url).write_pdf(
+                tmp_path,
+                stylesheets=[READER_CSS],
+                presentational_hints=True,
+            )
+            filename = safe_filename(title, ".pdf")
+            caption = f"📄 {title}"
+
+        elif fmt == "md":
+            h = html2text.HTML2Text()
+            h.ignore_links = False
+            h.body_width = 0
+            md = f"# {title}\n\nДжерело: {url}\n\n" + h.handle(content_html)
+            with tempfile.NamedTemporaryFile(suffix=".md", delete=False, mode="w", encoding="utf-8") as tmp:
+                tmp_path = tmp.name
+                tmp.write(md)
+            filename = safe_filename(title, ".md")
+            caption = f"📝 {title}"
+
+        elif fmt == "epub":
+            book = epub.EpubBook()
+            book.set_identifier(url)
+            book.set_title(title)
+            book.set_language("uk")
+
+            chapter = epub.EpubHtml(title=title, file_name="article.xhtml", lang="uk")
+            chapter.content = build_page_html(title, url, content_html)
+            book.add_item(chapter)
+            book.toc = [chapter]
+            book.spine = ["nav", chapter]
+            book.add_item(epub.EpubNcx())
+            book.add_item(epub.EpubNav())
+
+            with tempfile.NamedTemporaryFile(suffix=".epub", delete=False) as tmp:
+                tmp_path = tmp.name
+            epub.write_epub(tmp_path, book)
+            filename = safe_filename(title, ".epub")
+            caption = f"📚 {title}"
+
+        else:  # html
+            page_html = build_page_html(title, url, content_html)
+            with tempfile.NamedTemporaryFile(suffix=".html", delete=False, mode="w", encoding="utf-8") as tmp:
+                tmp_path = tmp.name
+                tmp.write(page_html)
+            filename = safe_filename(title, ".html")
+            caption = f"🌐 {title}"
+
+        await query.delete_message()
+        with open(tmp_path, "rb") as f:
+            await query.message.reply_document(
+                document=f,
+                filename=filename,
+                caption=caption,
+            )
+
+    except Exception:
+        logger.exception("Unexpected error while generating %s for %s", fmt, url)
+        await query.edit_message_text("❌ Сталася непередбачена помилка. Спробуй ще раз.")
     finally:
-        if pdf_path:
+        if tmp_path:
             try:
-                os.unlink(pdf_path)
+                os.unlink(tmp_path)
             except Exception:
                 pass
 
@@ -231,6 +323,7 @@ def main() -> None:
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(CallbackQueryHandler(handle_format, pattern=r"^fmt:"))
 
     logger.info("Bot started")
     app.run_polling(drop_pending_updates=True)
