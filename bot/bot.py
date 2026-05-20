@@ -33,6 +33,9 @@ def format_keyboard(article_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton("🌐 HTML", callback_data=f"fmt:html:{article_id}"),
             InlineKeyboardButton("📚 EPUB", callback_data=f"fmt:epub:{article_id}"),
         ],
+        [
+            InlineKeyboardButton("📤 Поділитись", callback_data=f"share:{article_id}"),
+        ],
     ])
 
 
@@ -106,6 +109,77 @@ async def handle_link_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         InlineKeyboardButton("❌ Скасувати", callback_data="linkcancel"),
     ]])
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+
+async def handle_share_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    article_id = int(query.data.split(":")[1])
+    user_id = str(query.from_user.id)
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{API_URL}/share/generate",
+            params={"article_id": article_id, "user_id": user_id},
+        )
+
+    if resp.status_code != 200:
+        await query.answer("❌ Не вдалося згенерувати код.", show_alert=True)
+        return
+
+    code = resp.json()["code"]
+    await query.message.reply_text(
+        f"📤 Код для передачі статті:\n\n"
+        f"<code>{code}</code>\n\n"
+        f"Надішли його іншому користувачу. Код одноразовий — діє до використання.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ Відмінити код", callback_data=f"sharerevoke:{code}:{user_id}"),
+        ]]),
+    )
+
+
+async def handle_share_revoke(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    parts = query.data.split(":")
+    code, user_id = parts[1], parts[2]
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.delete(
+            f"{API_URL}/share/{code}",
+            params={"user_id": user_id},
+        )
+
+    if resp.status_code == 200:
+        await query.edit_message_text("✅ Код відмінено.")
+    else:
+        await query.edit_message_text("❌ Код вже використано або не знайдено.")
+
+
+async def handle_share_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    code = update.message.text.strip().upper()
+    user_id = str(update.effective_user.id)
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{API_URL}/share/claim",
+            json={"code": code, "user_id": user_id, "user_type": "telegram"},
+        )
+
+    if resp.status_code != 200:
+        await update.message.reply_text(f"❌ {resp.json().get('detail', 'Помилка.')}")
+        return
+
+    article = resp.json()
+    await update.message.reply_text(
+        f"✅ Стаття додана до твоєї історії!\n\n"
+        f"<b>{article['title']}</b>\n\nОберіть формат:",
+        parse_mode="HTML",
+        reply_markup=format_keyboard(article["id"]),
+    )
 
 
 async def handle_link_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -275,8 +349,11 @@ def main() -> None:
     app.add_handler(CommandHandler("link", link))
     app.add_handler(CallbackQueryHandler(handle_history_select, pattern=r"^hist:"))
     app.add_handler(CallbackQueryHandler(handle_format, pattern=r"^fmt:"))
+    app.add_handler(CallbackQueryHandler(handle_share_generate, pattern=r"^share:\d+$"))
+    app.add_handler(CallbackQueryHandler(handle_share_revoke, pattern=r"^sharerevoke:"))
     app.add_handler(CallbackQueryHandler(handle_link_callback, pattern=r"^link"))
     app.add_handler(MessageHandler(filters.Regex(r"^[A-Z0-9]{6}$"), handle_link_code))
+    app.add_handler(MessageHandler(filters.Regex(r"^[A-Z0-9]{8}$"), handle_share_code))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info("Bot started")

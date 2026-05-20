@@ -43,10 +43,12 @@
       margin-top: 6px; width: 100%; font-size: 11px;
       padding: 4px; background: #f0f0f0;
     }
-    #link-section {
+    #share-section, #link-section {
       margin-top: 12px; border-top: 1px solid #eee; padding-top: 10px;
     }
-    #link-section label { font-size: 11px; color: #888; display: block; margin-bottom: 4px; }
+    #share-section label, #link-section label {
+      font-size: 11px; color: #888; display: block; margin-bottom: 4px;
+    }
   </style>
 </head>
 <body>
@@ -63,6 +65,15 @@
     <label>API URL</label>
     <input id="api-url-input" type="text" placeholder="https://your-domain.com">
     <button id="save-btn">Зберегти</button>
+  </div>
+  <div id="share-section">
+    <label>Отримати статтю від іншого користувача</label>
+    <div style="display:flex;gap:6px;margin-top:4px">
+      <input id="share-code-input" type="text" placeholder="Код (8 символів)"
+        style="flex:1;font-size:11px;padding:4px 6px;border:1px solid #ddd;border-radius:4px;text-transform:uppercase">
+      <button id="share-claim-btn" style="font-size:11px;padding:4px 8px">Отримати</button>
+    </div>
+    <div id="share-status" style="font-size:11px;color:#555;margin-top:4px;min-height:16px"></div>
   </div>
   <div id="link-section">
     <label>Прив'язати до Telegram або іншого браузера</label>

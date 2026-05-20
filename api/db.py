@@ -43,6 +43,14 @@ async def init_db() -> None:
                 expires_at TEXT NOT NULL
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS share_codes (
+                code TEXT PRIMARY KEY,
+                article_id INTEGER NOT NULL,
+                owner_user_id TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
         await db.commit()
 
     await _migrate()
@@ -132,6 +140,54 @@ async def get_user_history(user_id: str, limit: int = 10) -> list[dict]:
             (user_id, limit),
         ) as cursor:
             return [dict(r) for r in await cursor.fetchall()]
+
+
+async def create_share_code(article_id: int, user_id: str) -> str:
+    article = await get_article(article_id, user_id)
+    if not article:
+        raise ValueError("article_not_found")
+
+    code = "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO share_codes (code, article_id, owner_user_id, created_at) VALUES (?, ?, ?, ?)",
+            (code, article_id, user_id, datetime.utcnow().isoformat()),
+        )
+        await db.commit()
+    return code
+
+
+async def revoke_share_code(code: str, user_id: str) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "DELETE FROM share_codes WHERE code = ? AND owner_user_id = ?",
+            (code, user_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def claim_share_code(code: str, user_id: str, user_type: str) -> dict:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT s.article_id, a.url, a.title, a.content_html "
+            "FROM share_codes s JOIN articles a ON a.id = s.article_id "
+            "WHERE s.code = ?",
+            (code,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                raise ValueError("invalid_code")
+            row = dict(row)
+
+        await get_or_create_user(user_id, user_type)
+        new_id = await save_article(user_id, row["url"], row["title"], row["content_html"])
+
+        await db.execute("DELETE FROM share_codes WHERE code = ?", (code,))
+        await db.commit()
+
+    return {"id": new_id, "title": row["title"], "url": row["url"]}
 
 
 async def create_link_code(user_id: str) -> str:

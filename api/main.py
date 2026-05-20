@@ -8,7 +8,11 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from .converter import generate_file, MEDIA_TYPES
-from .db import init_db, get_or_create_user, save_article, get_article, get_user_history, create_link_code, preview_link, confirm_link
+from .db import (
+    init_db, get_or_create_user, save_article, get_article, get_user_history,
+    create_link_code, preview_link, confirm_link,
+    create_share_code, revoke_share_code, claim_share_code,
+)
 from .extractor import fetch_and_extract, ExtractError
 
 logging.basicConfig(
@@ -91,6 +95,38 @@ async def download(article_id: int, format: str, user_id: str):
 @app.get("/history")
 async def history(user_id: str):
     return await get_user_history(user_id)
+
+
+class ShareClaimRequest(BaseModel):
+    code: str
+    user_id: str
+    user_type: str = "browser"
+
+
+@app.post("/share/generate")
+async def share_generate(article_id: int, user_id: str):
+    try:
+        code = await create_share_code(article_id, user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Стаття не знайдена.")
+    return {"code": code}
+
+
+@app.delete("/share/{code}")
+async def share_revoke(code: str, user_id: str):
+    revoked = await revoke_share_code(code, user_id)
+    if not revoked:
+        raise HTTPException(status_code=404, detail="Код не знайдено або не належить вам.")
+    return {"ok": True}
+
+
+@app.post("/share/claim")
+async def share_claim(req: ShareClaimRequest):
+    try:
+        article = await claim_share_code(req.code, req.user_id, req.user_type)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Код не знайдено або вже використано.")
+    return article
 
 
 class LinkConfirmRequest(BaseModel):

@@ -103,6 +103,30 @@ async function convert(fmt, url, userId, apiUrl) {
     setStatus("API URL збережено.");
   });
 
+  const shareStatus = document.getElementById("share-status");
+  document.getElementById("share-claim-btn").addEventListener("click", async () => {
+    const code = document.getElementById("share-code-input").value.trim().toUpperCase();
+    const api = apiInput.value.trim().replace(/\/$/, "");
+    if (!code || !api) { shareStatus.textContent = "Вкажи код та API URL."; return; }
+    shareStatus.textContent = "⏳ Отримую…";
+    try {
+      const resp = await fetch(`${api}/share/claim`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, user_id: userId, user_type: "browser" }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        shareStatus.textContent = data.detail || "Помилка.";
+      } else {
+        shareStatus.textContent = `✅ Додано: «${data.title}»`;
+        document.getElementById("share-code-input").value = "";
+      }
+    } catch {
+      shareStatus.textContent = "Не вдалося зв'язатися з API.";
+    }
+  });
+
   const linkStatus = document.getElementById("link-status");
   const linkCodeInput = document.getElementById("link-code-input");
 
