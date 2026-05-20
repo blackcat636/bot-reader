@@ -2,8 +2,10 @@ import logging
 import os
 import re
 import tempfile
+from datetime import datetime
 from urllib.parse import urlparse
 
+import aiosqlite
 import html2text
 import httpx
 from ebooklib import epub
@@ -19,6 +21,7 @@ from weasyprint import HTML, CSS
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+DB_PATH = os.getenv("DB_PATH", "/app/data/articles.db")
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -180,16 +183,18 @@ FETCH_HEADERS = {
     "Accept-Language": "uk,en-US;q=0.9,en;q=0.8",
 }
 
-FORMAT_KEYBOARD = InlineKeyboardMarkup([
-    [
-        InlineKeyboardButton("📄 PDF", callback_data="fmt:pdf"),
-        InlineKeyboardButton("📝 Markdown", callback_data="fmt:md"),
-    ],
-    [
-        InlineKeyboardButton("🌐 HTML", callback_data="fmt:html"),
-        InlineKeyboardButton("📚 EPUB", callback_data="fmt:epub"),
-    ],
-])
+
+def format_keyboard(article_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📄 PDF", callback_data=f"fmt:pdf:{article_id}"),
+            InlineKeyboardButton("📝 Markdown", callback_data=f"fmt:md:{article_id}"),
+        ],
+        [
+            InlineKeyboardButton("🌐 HTML", callback_data=f"fmt:html:{article_id}"),
+            InlineKeyboardButton("📚 EPUB", callback_data=f"fmt:epub:{article_id}"),
+        ],
+    ])
 
 
 def is_valid_url(text: str) -> bool:
@@ -223,11 +228,97 @@ def build_page_html(title: str, url: str, content_html: str, inline_css: str = "
 </html>"""
 
 
+async def init_db() -> None:
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS articles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                url TEXT NOT NULL,
+                title TEXT NOT NULL,
+                content_html TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
+        await db.commit()
+
+
+async def save_article(user_id: int, url: str, title: str, content_html: str) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "INSERT INTO articles (user_id, url, title, content_html, created_at) VALUES (?, ?, ?, ?, ?)",
+            (user_id, url, title, content_html, datetime.utcnow().isoformat()),
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_article(article_id: int, user_id: int) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM articles WHERE id = ? AND user_id = ?",
+            (article_id, user_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+
+async def get_user_history(user_id: int, limit: int = 10) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id, title, url, created_at FROM articles WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+            (user_id, limit),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Привіт! Надішли мені посилання на статтю — я завантажу її в режимі читача "
         "(без реклами, банерів і коментарів) і запитаю, у якому форматі зберегти.\n\n"
-        "Просто вставте URL і надішліть."
+        "Просто вставте URL і надішліть. /history — переглянути збережені статті."
+    )
+
+
+async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    articles = await get_user_history(user_id)
+
+    if not articles:
+        await update.message.reply_text("Історія порожня. Надішли посилання на статтю — я збережу її.")
+        return
+
+    buttons = []
+    for a in articles:
+        date = a["created_at"][:10]
+        label = f"{a['title'][:35]}… ({date})" if len(a["title"]) > 35 else f"{a['title']} ({date})"
+        buttons.append([InlineKeyboardButton(label, callback_data=f"hist:{a['id']}")])
+
+    await update.message.reply_text(
+        "Останні збережені статті:",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
+async def handle_history_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    article_id = int(query.data.split(":")[1])
+    article = await get_article(article_id, query.from_user.id)
+
+    if not article:
+        await query.edit_message_text("❌ Стаття не знайдена.")
+        return
+
+    await query.edit_message_text(
+        f"✅ <b>{article['title']}</b>\n\nОберіть формат:",
+        parse_mode="HTML",
+        reply_markup=format_keyboard(article_id),
     )
 
 
@@ -269,16 +360,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
             return
 
-        context.user_data["article"] = {
-            "url": text,
-            "title": title,
-            "content_html": content_html,
-        }
+        article_id = await save_article(update.effective_user.id, text, title, content_html)
 
         await status.edit_text(
             f"✅ <b>{title}</b>\n\nОберіть формат:",
             parse_mode="HTML",
-            reply_markup=FORMAT_KEYBOARD,
+            reply_markup=format_keyboard(article_id),
         )
 
     except httpx.TimeoutException:
@@ -296,12 +383,14 @@ async def handle_format(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     query = update.callback_query
     await query.answer()
 
-    article = context.user_data.get("article")
+    parts = query.data.split(":")
+    fmt, article_id = parts[1], int(parts[2])
+
+    article = await get_article(article_id, query.from_user.id)
     if not article:
-        await query.edit_message_text("❌ Сесія застаріла. Надішли посилання ще раз.")
+        await query.edit_message_text("❌ Стаття не знайдена. Надішли посилання ще раз.")
         return
 
-    fmt = query.data.split(":")[1]
     url = article["url"]
     title = article["title"]
     content_html = article["content_html"]
@@ -380,13 +469,19 @@ async def handle_format(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 pass
 
 
+async def post_init(app: Application) -> None:
+    await init_db()
+
+
 def main() -> None:
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is not set")
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("history", history))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(CallbackQueryHandler(handle_history_select, pattern=r"^hist:"))
     app.add_handler(CallbackQueryHandler(handle_format, pattern=r"^fmt:"))
 
     logger.info("Bot started")
