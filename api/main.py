@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -9,7 +10,8 @@ from pydantic import BaseModel
 
 from .converter import generate_file, MEDIA_TYPES
 from .db import (
-    init_db, get_or_create_user, save_article, get_article, get_user_history,
+    init_db, get_or_create_user, save_article, get_article,
+    get_user_history, count_user_articles, search_articles, cleanup_expired_codes,
     create_link_code, preview_link, confirm_link,
     create_share_code, revoke_share_code, claim_share_code,
 )
@@ -22,9 +24,18 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def _cleanup_loop():
+    while True:
+        await asyncio.sleep(3600)
+        removed = await cleanup_expired_codes()
+        if removed:
+            logger.info("Cleaned up %d expired link codes", removed)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    asyncio.create_task(_cleanup_loop())
     yield
 
 
@@ -93,8 +104,15 @@ async def download(article_id: int, format: str, user_id: str):
 
 
 @app.get("/history")
-async def history(user_id: str):
-    return await get_user_history(user_id)
+async def history(user_id: str, limit: int = 10, offset: int = 0):
+    articles = await get_user_history(user_id, limit=limit, offset=offset)
+    total = await count_user_articles(user_id)
+    return {"items": articles, "total": total, "offset": offset, "limit": limit}
+
+
+@app.get("/search")
+async def search(user_id: str, q: str, limit: int = 10):
+    return await search_articles(user_id, q, limit=limit)
 
 
 class ShareClaimRequest(BaseModel):

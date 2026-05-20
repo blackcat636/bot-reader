@@ -51,6 +51,9 @@ async def init_db() -> None:
                 created_at TEXT NOT NULL
             )
         """)
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_articles_user_id ON articles(user_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_users_group_id ON users(group_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_users_user_id ON users(user_id)")
         await db.commit()
 
     await _migrate()
@@ -126,7 +129,7 @@ async def get_article(article_id: int, user_id: str) -> dict | None:
             return dict(row) if row else None
 
 
-async def get_user_history(user_id: str, limit: int = 10) -> list[dict]:
+async def get_user_history(user_id: str, limit: int = 10, offset: int = 0) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
@@ -135,11 +138,51 @@ async def get_user_history(user_id: str, limit: int = 10) -> list[dict]:
             FROM articles a
             JOIN users u ON u.user_id = a.user_id
             WHERE u.group_id = (SELECT group_id FROM users WHERE user_id = ?)
-            ORDER BY a.created_at DESC LIMIT ?
+            ORDER BY a.created_at DESC LIMIT ? OFFSET ?
             """,
-            (user_id, limit),
+            (user_id, limit, offset),
         ) as cursor:
             return [dict(r) for r in await cursor.fetchall()]
+
+
+async def count_user_articles(user_id: str) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """
+            SELECT COUNT(*) FROM articles a
+            JOIN users u ON u.user_id = a.user_id
+            WHERE u.group_id = (SELECT group_id FROM users WHERE user_id = ?)
+            """,
+            (user_id,),
+        ) as cursor:
+            return (await cursor.fetchone())[0]
+
+
+async def search_articles(user_id: str, query: str, limit: int = 10) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT a.id, a.title, a.url, a.created_at, u.type as source
+            FROM articles a
+            JOIN users u ON u.user_id = a.user_id
+            WHERE u.group_id = (SELECT group_id FROM users WHERE user_id = ?)
+              AND a.title LIKE ?
+            ORDER BY a.created_at DESC LIMIT ?
+            """,
+            (user_id, f"%{query}%", limit),
+        ) as cursor:
+            return [dict(r) for r in await cursor.fetchall()]
+
+
+async def cleanup_expired_codes() -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "DELETE FROM link_codes WHERE expires_at < ?",
+            (datetime.utcnow().isoformat(),),
+        )
+        await db.commit()
+        return cursor.rowcount
 
 
 async def create_share_code(article_id: int, user_id: str) -> str:

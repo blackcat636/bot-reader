@@ -1,12 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Reader Bot",
-  "version": "1.0",
+  "version": "1.1",
   "description": "Зберегти статтю у PDF, Markdown, HTML або EPUB",
-  "permissions": ["activeTab", "storage"],
+  "permissions": ["activeTab", "storage", "contextMenus", "notifications"],
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_popup": "popup.html",
     "default_title": "Reader Bot"
+  },
+  "background": {
+    "service_worker": "background.js"
   }
 }

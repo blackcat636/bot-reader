@@ -72,6 +72,7 @@ async function convert(fmt, url, userId, apiUrl) {
     URL.revokeObjectURL(blobUrl);
 
     setStatus("✅ Файл збережено!");
+    loadRecent(savedApi);
   } catch (e) {
     setStatus("Не вдалося зв'язатися з API. Перевір налаштування.", true);
   }
@@ -85,6 +86,41 @@ async function convert(fmt, url, userId, apiUrl) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const currentUrl = tab?.url || "";
   urlEl.textContent = currentUrl;
+
+  // Завантажуємо останню історію
+  async function loadRecent(api) {
+    if (!api) return;
+    try {
+      const resp = await fetch(`${api}/history?user_id=${userId}&limit=5`);
+      const data = await resp.json();
+      const list = document.getElementById("recent-list");
+      if (!data.items?.length) {
+        list.textContent = "Поки порожньо.";
+        return;
+      }
+      list.innerHTML = "";
+      data.items.forEach((a) => {
+        const el = document.createElement("div");
+        el.className = "recent-item";
+        el.title = a.title;
+        el.textContent = a.title;
+        el.addEventListener("click", () => chrome.tabs.create({ url: a.url }));
+        list.appendChild(el);
+      });
+      const header = document.getElementById("recent-header");
+      header.textContent = `📚 Остання історія (всього: ${data.total})`;
+
+      // badge
+      const label = data.total > 99 ? "99+" : String(data.total);
+      chrome.action.setBadgeText({ text: label });
+      chrome.action.setBadgeBackgroundColor({ color: "#1a5fa8" });
+    } catch {
+      document.getElementById("recent-list").textContent = "Не вдалося завантажити.";
+    }
+  }
+
+  const savedApi = apiInput.value.trim().replace(/\/$/, "");
+  if (savedApi) loadRecent(savedApi);
 
   document.querySelectorAll("button[data-fmt]").forEach((btn) => {
     btn.addEventListener("click", () => {

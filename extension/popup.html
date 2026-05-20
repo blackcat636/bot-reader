@@ -43,6 +43,15 @@
       margin-top: 6px; width: 100%; font-size: 11px;
       padding: 4px; background: #f0f0f0;
     }
+    #recent-section {
+      margin-top: 10px; border-top: 1px solid #eee; padding-top: 8px;
+    }
+    .recent-item {
+      padding: 3px 0; border-bottom: 1px solid #f0f0f0;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      cursor: pointer; color: #1a5fa8;
+    }
+    .recent-item:hover { text-decoration: underline; }
     #share-section, #link-section {
       margin-top: 12px; border-top: 1px solid #eee; padding-top: 10px;
     }
@@ -65,6 +74,10 @@
     <label>API URL</label>
     <input id="api-url-input" type="text" placeholder="https://your-domain.com">
     <button id="save-btn">Зберегти</button>
+  </div>
+  <div id="recent-section">
+    <div id="recent-header" style="font-size:11px;color:#888;margin-bottom:4px">📚 Остання історія</div>
+    <div id="recent-list" style="font-size:11px;color:#555"></div>
   </div>
   <div id="share-section">
     <label>Отримати статтю від іншого користувача</label>

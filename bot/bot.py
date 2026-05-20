@@ -53,7 +53,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "(без реклами, банерів і коментарів) і запитаю, у якому форматі зберегти.\n\n"
         "Просто вставте URL і надішліть.\n"
         "/history — переглянути збережені статті.\n"
-        "/link — прив'язати Chrome розширення."
+        "/find <i>слово</i> — пошук по заголовку.\n"
+        "/link — прив'язати Chrome розширення.",
+        parse_mode="HTML",
     )
 
 
@@ -207,14 +209,81 @@ async def handle_link_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.edit_message_text(f"✅ Готово! Акаунтів у групі: {merged}.")
 
 
+PAGE_SIZE = 8
+
+
+def _history_keyboard(articles: list, offset: int, total: int) -> InlineKeyboardMarkup:
+    buttons = []
+    for a in articles:
+        date = a["created_at"][:10]
+        label = f"{a['title'][:35]}… ({date})" if len(a["title"]) > 35 else f"{a['title']} ({date})"
+        buttons.append([InlineKeyboardButton(label, callback_data=f"hist:{a['id']}")])
+
+    nav = []
+    if offset > 0:
+        nav.append(InlineKeyboardButton("◀️ Назад", callback_data=f"histpage:{offset - PAGE_SIZE}"))
+    if offset + PAGE_SIZE < total:
+        nav.append(InlineKeyboardButton("▶️ Далі", callback_data=f"histpage:{offset + PAGE_SIZE}"))
+    if nav:
+        buttons.append(nav)
+
+    return InlineKeyboardMarkup(buttons)
+
+
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = str(update.effective_user.id)
     async with httpx.AsyncClient() as client:
-        resp = await client.get(f"{API_URL}/history", params={"user_id": user_id})
+        resp = await client.get(f"{API_URL}/history", params={"user_id": user_id, "limit": PAGE_SIZE, "offset": 0})
+    data = resp.json()
+
+    if not data["items"]:
+        await update.message.reply_text("Історія порожня. Надішли посилання на статтю — я збережу її.")
+        return
+
+    total = data["total"]
+    text = f"Збережені статті (всього: {total}):"
+    await update.message.reply_text(
+        text,
+        reply_markup=_history_keyboard(data["items"], 0, total),
+    )
+
+
+async def handle_history_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    offset = int(query.data.split(":")[1])
+    user_id = str(query.from_user.id)
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{API_URL}/history",
+            params={"user_id": user_id, "limit": PAGE_SIZE, "offset": offset},
+        )
+    data = resp.json()
+    total = data["total"]
+    page = offset // PAGE_SIZE + 1
+    pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
+
+    await query.edit_message_text(
+        f"Збережені статті (всього: {total}, сторінка {page}/{pages}):",
+        reply_markup=_history_keyboard(data["items"], offset, total),
+    )
+
+
+async def find(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query_text = " ".join(context.args).strip() if context.args else ""
+    if not query_text:
+        await update.message.reply_text("Використання: /find <i>слово для пошуку</i>", parse_mode="HTML")
+        return
+
+    user_id = str(update.effective_user.id)
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(f"{API_URL}/search", params={"user_id": user_id, "q": query_text})
     articles = resp.json()
 
     if not articles:
-        await update.message.reply_text("Історія порожня. Надішли посилання на статтю — я збережу її.")
+        await update.message.reply_text(f"Нічого не знайдено за запитом «{query_text}».")
         return
 
     buttons = []
@@ -224,7 +293,7 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         buttons.append([InlineKeyboardButton(label, callback_data=f"hist:{a['id']}")])
 
     await update.message.reply_text(
-        "Останні збережені статті:",
+        f"Результати пошуку «{query_text}»:",
         reply_markup=InlineKeyboardMarkup(buttons),
     )
 
@@ -346,7 +415,9 @@ def main() -> None:
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("history", history))
+    app.add_handler(CommandHandler("find", find))
     app.add_handler(CommandHandler("link", link))
+    app.add_handler(CallbackQueryHandler(handle_history_page, pattern=r"^histpage:"))
     app.add_handler(CallbackQueryHandler(handle_history_select, pattern=r"^hist:"))
     app.add_handler(CallbackQueryHandler(handle_format, pattern=r"^fmt:"))
     app.add_handler(CallbackQueryHandler(handle_share_generate, pattern=r"^share:\d+$"))
