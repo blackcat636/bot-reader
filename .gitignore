@@ -1,0 +1,16 @@
+# Secrets / local data
+.env
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Databases
+*.db
+
+# OS
+.DS_Store
