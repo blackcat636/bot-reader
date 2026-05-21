@@ -4,41 +4,86 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-Telegram bot that accepts an article URL and replies with a clean PDF rendered in "reader mode" — no ads, banners, popups, or comments. The entire implementation lives in a single file: `bot.py`.
+A "reader mode" service that fetches an article URL, strips ads/banners/popups/comments,
+saves a clean copy, and exports it as PDF, Markdown, HTML, or EPUB. Two clients share one
+backend and one article history:
+
+- **Telegram bot** (`bot/`) — send a URL, pick a format, get the file.
+- **Chrome extension** (`extension/`, MV3) — save the current tab from the browser.
+
+A Telegram account and a browser can be **merged** (via `/link`) so both see the same history.
+
+## Components
+
+| Path          | Role                                                                    |
+|---------------|-------------------------------------------------------------------------|
+| `api/`        | FastAPI backend — the only place that fetches, extracts, converts, stores |
+| `bot/`        | python-telegram-bot long-polling client; talks to the API over HTTP     |
+| `extension/`  | Chrome MV3 extension (popup + background) calling the same API           |
+| `i18n/`       | `uk.json` / `en.json` translation tables, shared by API and bot          |
+
+### `api/` modules
+
+- `main.py` — FastAPI app + all endpoints. `lifespan` runs `init_db()` and a background loop
+  that purges expired link codes hourly. Endpoints: `/extract`, `/articles/{id}` (GET/DELETE),
+  `/articles/{id}/download`, `/history`, `/search`, `/share/*`, `/link/*`, `/users/{id}` (lang).
+- `extractor.py` — `fetch_and_extract`: `httpx` GET (desktop Chrome UA, 30 s, redirects),
+  rejects non-HTML, runs `readability.Document`; raises `ExtractError("no_content")` if the
+  stripped text is under 200 chars (paywall/SPA).
+- `converter.py` — `generate_file` renders the stored HTML into the four formats. PDF/HTML use
+  the module-level `READER_CSS` (Georgia serif, A4, page numbers). `safe_filename` keeps Unicode
+  letters (`\w` + `re.UNICODE`). `MEDIA_TYPES` / `EXTENSIONS` enumerate supported formats.
+- `db.py` — `aiosqlite`, file at `DB_PATH` (default `/app/data/articles.db`). `init_db` creates
+  tables and runs idempotent `_migrate()` (adds `group_id`, `lang` to old `users` rows).
+- `i18n.py` — loads `i18n/*.json`; `t(lang, key, **kwargs)` formats a string, `normalize` maps a
+  locale code to `uk`/`en`.
+
+### Data model (`db.py`)
+
+- `groups` — a shared history bucket. Every user belongs to exactly one group.
+- `users` — `user_id` (Telegram id or browser uuid), `type` (`telegram`/`browser`), `group_id`, `lang`.
+- `articles` — `user_id`, `url`, `title`, `content_html`. Queries join through the user's group, so
+  all members of a group see all articles. Deduped by URL within a group.
+- `link_codes` — 6-char, 10-min codes for merging two groups (`/link`).
+- `share_codes` — 8-char one-time codes for copying a single article to another user (`/share`).
 
 ## Commands
 
 ```bash
-# Run via Docker (preferred — handles weasyprint system deps)
-docker compose up -d --build
-docker compose logs -f
-docker compose restart
+# Full stack via Docker (preferred — handles weasyprint system deps)
+docker compose up -d --build            # api + bot
+docker compose up -d --build bot        # rebuild just the bot
+docker compose --profile tunnel up -d   # also start cloudflared
+docker compose logs -f api bot
 docker compose down
 
-# Run locally (requires libcairo2, libpango-1.0-0, libpangocairo-1.0-0,
+# Local API (needs libcairo2, libpango-1.0-0, libpangocairo-1.0-0,
 # libgdk-pixbuf-2.0-0, fonts-liberation, fonts-dejavu-core on the host)
 pip install -r requirements.txt
-python bot.py
+uvicorn api.main:app --reload      # API on :8000
+python -m bot.bot                  # bot (reads API_URL, default http://api:8000)
 ```
 
-`BOT_TOKEN` (from @BotFather) must be set in `.env`. No test suite, no linter configured.
+`.env` needs `BOT_TOKEN` (from @BotFather). Optional: `DB_PATH`, `API_DOMAIN` (nginx-proxy),
+`CLOUDFLARE_TUNNEL_TOKEN` (tunnel profile). `API_URL` is injected by compose. No test suite,
+no linter.
 
-## Architecture
+## Compose services
 
-Single-file async bot (`bot.py`). Pipeline for a user-submitted URL:
-
-1. `is_valid_url` — sanity check (`http`/`https` + netloc).
-2. `httpx.AsyncClient` fetches the page with a desktop Chrome UA, 30 s timeout, redirects followed. Non-HTML content types are rejected early.
-3. `readability.Document` (Mozilla Readability port) extracts `title()` and `summary(html_partial=True)`. If the stripped text is under 200 chars, the bot returns a "paywall / could not extract" message.
-4. Extracted HTML is wrapped in a minimal document template that prepends `<h1>{title}</h1>` and a `.source` line linking back to the original URL.
-5. `weasyprint.HTML(...).write_pdf(...)` renders with the module-level `READER_CSS` (Georgia serif, A4, page numbers in footer, table/blockquote/code styling). `base_url=text` is set so relative image URLs resolve.
-6. PDF is written to a `tempfile.NamedTemporaryFile`, sent via `reply_document` with filename derived from `safe_filename(title)`, then unlinked in `finally`.
-
-Status messages (`⏳`, `📖`, `🖨`) are edited in place on a single Telegram message across pipeline stages, then deleted before the PDF is sent. Specific `httpx` exception classes (`TimeoutException`, `HTTPStatusError`, `RequestError`) map to distinct user-facing error messages; anything else is logged with `logger.exception` and surfaces as a generic error.
+- `api` — `uvicorn api.main:app`, exposes `8000`, mounts `./data` for the SQLite db.
+- `bot` — `python -m bot.bot`, depends on `api`, reaches it at `http://api:8000`.
+- `cloudflared` — optional public tunnel, only with `--profile tunnel`.
 
 ## Things to be aware of
 
-- JS-rendered SPAs without SSR will return empty content — readability runs on the raw HTML response, no browser.
-- `READER_CSS` is parsed once at import time (module-level `CSS(...)`), so style edits require a restart.
-- `bot.py` is the only application file copied into the Docker image; adding new modules requires updating the `Dockerfile`.
+- **The bot holds no logic of its own** — it fetches/extracts/converts nothing. Every action is an
+  HTTP call to the API. New features usually mean a new endpoint in `api/` plus a handler in `bot/`.
+- **`Content-Disposition`** carries both `filename="<ascii>"` and `filename*=UTF-8''<encoded>`. The
+  ASCII copy strips Cyrillic; clients must prefer `filename*` (the bot does, `bot/bot.py`).
+- JS-rendered SPAs without SSR return empty content — readability runs on the raw HTML, no browser.
+- `READER_CSS` is parsed once at import time, so style edits need an API restart.
+- `Dockerfile` copies only `api/`, `bot/`, `i18n/`. Adding a new top-level module means updating it.
 - The bot uses long polling (`run_polling(drop_pending_updates=True)`), not webhooks.
+- The SQLite db lives in the `./data` bind mount, so it survives `docker compose down`/rebuilds;
+  only deleting the host folder loses it. `.env` and `data/` are gitignored.
+- User-facing strings live in `i18n/*.json` (keys resolved via `t(...)`), never hard-coded.
