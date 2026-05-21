@@ -1,6 +1,6 @@
 import logging
 import os
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 
 import httpx
 from dotenv import load_dotenv
@@ -522,10 +522,20 @@ async def handle_format(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         filename = "article"
         if cd := resp.headers.get("content-disposition"):
+            ascii_name = None
             for part in cd.split(";"):
                 part = part.strip()
+                if part.startswith("filename*="):
+                    value = part.split("=", 1)[1]
+                    if "''" in value:
+                        value = value.split("''", 1)[1]
+                    filename = unquote(value)
+                    break
                 if part.startswith("filename="):
-                    filename = part.split("=", 1)[1].strip('"')
+                    ascii_name = part.split("=", 1)[1].strip('"')
+            else:
+                if ascii_name:
+                    filename = ascii_name
 
         icons = {"pdf": "📄", "md": "📝", "html": "🌐", "epub": "📚"}
         await query.delete_message()
