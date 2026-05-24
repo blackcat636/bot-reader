@@ -5,6 +5,7 @@
   "status_fetching": "⏳ Loading page…",
   "status_extracting": "📖 Extracting article text…",
   "status_generating": "⏳ Generating file…",
+  "status_telegraph": "⏳ Preparing reading page…",
 
   "history_empty": "History is empty. Send an article link — I'll save it.",
   "history_header": "Saved articles (total: {total}):",
@@ -15,11 +16,16 @@
   "find_empty": "Nothing found for «{query}».",
   "find_header": "Search results for «{query}»:",
 
+  "format_read": "📖 Read here",
+  "format_telegraph": "⚡ Instant View",
   "format_pdf": "📄 PDF",
   "format_md": "📝 Markdown",
   "format_html": "🌐 HTML",
   "format_epub": "📚 EPUB",
   "format_share": "📤 Share",
+
+  "read_telegraph_ready": "⚡ Article in Telegram reader mode:\n{url}",
+  "read_telegraph_error": "❌ Could not create reading page. Try again.",
 
   "article_not_found": "❌ Article not found. Send the link again.",
   "server_error": "❌ Could not reach the server. Try again.",
@@ -52,6 +58,7 @@
   "err_article_not_found": "Article not found.",
   "err_format_invalid": "Format must be one of: {formats}.",
   "err_generate": "Error generating file.",
+  "err_telegraph": "Could not publish the reading page.",
   "err_invalid_code": "Code not found.",
   "err_expired_code": "Code has expired. Generate a new one.",
   "err_same_group": "These accounts are already linked.",

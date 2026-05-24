@@ -37,6 +37,7 @@ async def init_db() -> None:
                 url TEXT NOT NULL,
                 title TEXT NOT NULL,
                 content_html TEXT NOT NULL,
+                telegraph_url TEXT,
                 created_at TEXT NOT NULL
             )
         """)
@@ -75,8 +76,14 @@ async def init_db() -> None:
 
 
 async def _migrate() -> None:
-    """Додає group_id до існуючих users без групи."""
+    """Додає нові колонки до старих users/articles (ідемпотентно)."""
     async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("PRAGMA table_info(articles)") as cursor:
+            art_columns = {row[1] for row in await cursor.fetchall()}
+        if "telegraph_url" not in art_columns:
+            await db.execute("ALTER TABLE articles ADD COLUMN telegraph_url TEXT")
+            await db.commit()
+
         async with db.execute("PRAGMA table_info(users)") as cursor:
             columns = {row[1] for row in await cursor.fetchall()}
 
@@ -223,6 +230,16 @@ async def delete_article_any(article_id: int) -> bool:
         cursor = await db.execute("DELETE FROM articles WHERE id = ?", (article_id,))
         await db.commit()
         return cursor.rowcount > 0
+
+
+async def set_article_telegraph_url(article_id: int, telegraph_url: str) -> None:
+    """Кешує згенерований telegra.ph URL, щоб не плодити сторінки при повторному читанні."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE articles SET telegraph_url = ? WHERE id = ?",
+            (telegraph_url, article_id),
+        )
+        await db.commit()
 
 
 async def get_user_history(user_id: str, limit: int = 10, offset: int = 0) -> list[dict]:

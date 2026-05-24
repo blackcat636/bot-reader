@@ -5,10 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Overview
 
 A "reader mode" service that fetches an article URL, strips ads/banners/popups/comments,
-saves a clean copy, and exports it as PDF, Markdown, HTML, or EPUB. Two clients share one
+saves a clean copy, and exports it as PDF, Markdown, HTML, or EPUB — or reads it **inside
+Telegram** (text messages in-chat, or a telegra.ph Instant View page). Two clients share one
 backend and one article history:
 
-- **Telegram bot** (`bot/`) — send a URL, pick a format, get the file.
+- **Telegram bot** (`bot/`) — send a URL, pick a format, get the file (or read it in Telegram).
 - **Chrome extension** (`extension/`, MV3) — save the current tab from the browser.
 
 A Telegram account and a browser can be **merged** (via `/link`) so both see the same history.
@@ -27,8 +28,9 @@ A Telegram account and a browser can be **merged** (via `/link`) so both see the
 
 - `main.py` — FastAPI app + all endpoints. `lifespan` runs `init_db()` and a background loop
   that purges expired link codes hourly. Endpoints: `/extract`, `/articles/{id}` (GET/DELETE),
-  `/articles/{id}/download`, `/history`, `/search`, `/share/*`, `/link/*`, `/users/{id}` (lang),
-  `/admin/*`. The `/admin/*` group (stats, users list, ban/unban, failed-URL log, plus per-user
+  `/articles/{id}/download`, `/articles/{id}/read` (Telegram-HTML chunks for in-chat reading),
+  `/articles/{id}/telegraph` (publish to telegra.ph → Instant View URL), `/history`, `/search`,
+  `/share/*`, `/link/*`, `/users/{id}` (lang), `/admin/*`. The `/admin/*` group (stats, users list, ban/unban, failed-URL log, plus per-user
   article browse/download/delete) is gated by `_require_admin(admin_id)` — `admin_id` must be in
   `ADMIN_IDS` (env, shared with the bot) or 403. `/extract` also rejects banned users (403
   `err_banned`), records every extraction failure via `log_failed_url`, and `touch_user`s
@@ -48,9 +50,22 @@ A Telegram account and a browser can be **merged** (via `/link`) so both see the
   `asyncio.to_thread` so it never blocks the event loop. PDF/HTML use the module-level `READER_CSS`
   (Georgia serif, A4, page numbers). `safe_filename` keeps Unicode letters (`\w` + `re.UNICODE`).
   `MEDIA_TYPES` / `EXTENSIONS` enumerate supported formats.
+- `telegram_view.py` — turns the stored `content_html` into the two in-Telegram reading formats.
+  Both are **sync, CPU-bound** (lxml parse) → `main.py` calls them via `asyncio.to_thread`, same as
+  `converter`. `html_to_chunks` maps the HTML to Telegram's tiny allowed inline subset
+  (`b/i/u/s/a/code` + `blockquote`/`pre`), drops images/tables/figures (text-only chat mode), and
+  packs paragraph "blocks" into the fewest messages ≤3800 chars; oversized blocks are stripped of
+  tags and re-escaped word-by-word so a tag/entity is never split across a message.
+  `html_to_telegraph_nodes` maps to Telegraph's node array (h1/h2→h3, h5/h6→h4, unknown tags
+  unwrapped, `a`/`img` URLs resolved absolute via the article URL).
+- `telegraph.py` — minimal async telegra.ph client. `create_page(title, nodes)` lazily creates an
+  account on first publish; the token lives **in process memory only** (`_token` + an asyncio lock),
+  losing it on restart is fine — already-published pages stay reachable. Optional `TELEGRAPH_TOKEN`
+  env to pin one. Raises `TelegraphError` on API `ok:false`.
 - `db.py` — `aiosqlite`, file at `DB_PATH` (default `/app/data/articles.db`). `init_db` creates
-  tables and runs idempotent `_migrate()` (adds `group_id`, `lang`, `username`, `is_banned`,
-  `last_active_at` to old `users` rows). Admin helpers: `list_users`/`count_users` (with per-user
+  tables and runs idempotent `_migrate()` (adds `telegraph_url` to old `articles`; `group_id`,
+  `lang`, `username`, `is_banned`, `last_active_at` to old `users` rows). `set_article_telegraph_url`
+  caches the published Instant View URL so re-tapping ⚡ doesn't create a new telegra.ph page. Admin helpers: `list_users`/`count_users` (with per-user
   `article_count`), `set_user_banned`/`is_user_banned`, `touch_user`, `get_admin_stats`,
   `log_failed_url`/`list_failed_urls`/`count_failed_urls`, and `get_article_any`/`delete_article_any`
   (by id, **no group check** — admin-only; the non-admin `get_article`/`delete_article` always scope
@@ -97,8 +112,9 @@ A Telegram account and a browser can be **merged** (via `/link`) so both see the
 - `groups` — a shared history bucket. Every user belongs to exactly one group.
 - `users` — `user_id` (Telegram id or browser uuid), `type` (`telegram`/`browser`), `group_id`,
   `lang`, `username` (display only, set by the bot on `/extract`), `is_banned`, `last_active_at`.
-- `articles` — `user_id`, `url`, `title`, `content_html`. Queries join through the user's group, so
-  all members of a group see all articles. Deduped by URL within a group.
+- `articles` — `user_id`, `url`, `title`, `content_html`, `telegraph_url` (cached Instant View URL,
+  nullable). Queries join through the user's group, so all members of a group see all articles.
+  Deduped by URL within a group.
 - `failed_urls` — `user_id`, `url`, `error`, `created_at`. Append-only log of extraction failures,
   written by `/extract` so admins can triage broken sites via `/failed`. Not auto-purged.
 - `link_codes` — 6-char, 10-min codes for merging two groups (`/link`).
@@ -125,8 +141,10 @@ python -m bot.bot                  # bot (reads API_URL, default http://api:8000
 `.env` needs `BOT_TOKEN` (from @BotFather). Optional: `ADMIN_IDS` (comma-separated Telegram ids;
 both `api` and `bot` read it from `.env` via `env_file`, so it needs no `environment:` entry),
 `DB_PATH`, `API_DOMAIN` (nginx-proxy), `CLOUDFLARE_TUNNEL_TOKEN` (tunnel profile),
-`CAPTCHA_PROVIDER` + `CAPTCHA_API_KEY` (renderer's captcha solver, off unless both set). `API_URL`
-(bot→api) and `RENDERER_URL` (api→renderer) are injected by compose. No test suite, no linter.
+`CAPTCHA_PROVIDER` + `CAPTCHA_API_KEY` (renderer's captcha solver, off unless both set),
+`TELEGRAPH_TOKEN` (pin a telegra.ph account for Instant View; otherwise one is auto-created in
+memory). `API_URL` (bot→api) and `RENDERER_URL` (api→renderer) are injected by compose. No test
+suite, no linter.
 
 ## Compose services
 

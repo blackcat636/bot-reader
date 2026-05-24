@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from urllib.parse import urlparse, unquote
@@ -39,6 +40,10 @@ def get_lang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
 
 def format_keyboard(article_id: int, lang: str = "en") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(t(lang, "format_read"), callback_data=f"read:{article_id}"),
+            InlineKeyboardButton(t(lang, "format_telegraph"), callback_data=f"tgph:{article_id}"),
+        ],
         [
             InlineKeyboardButton(t(lang, "format_pdf"), callback_data=f"fmt:pdf:{article_id}"),
             InlineKeyboardButton(t(lang, "format_md"), callback_data=f"fmt:md:{article_id}"),
@@ -505,6 +510,68 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await status.edit_text(t(lang, "unexpected_error"))
 
 
+async def handle_read(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(update, context)
+    article_id = int(query.data.split(":")[1])
+    user_id = str(query.from_user.id)
+
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.get(
+                f"{API_URL}/articles/{article_id}/read",
+                params={"user_id": user_id, "lang": lang},
+            )
+    except httpx.RequestError:
+        await query.message.reply_text(t(lang, "server_error"))
+        return
+
+    if resp.status_code == 404:
+        await query.message.reply_text(t(lang, "article_not_found"))
+        return
+    if resp.status_code != 200:
+        await query.message.reply_text(t(lang, "unexpected_error"))
+        return
+
+    chunks = resp.json()["chunks"]
+    for i, chunk in enumerate(chunks):
+        await query.message.reply_text(
+            chunk, parse_mode="HTML", disable_web_page_preview=True,
+        )
+        if i + 1 < len(chunks):
+            await asyncio.sleep(0.4)  # лагідно до Telegram-rate-limit для довгих статей
+
+
+async def handle_telegraph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    lang = get_lang(update, context)
+    article_id = int(query.data.split(":")[1])
+    user_id = str(query.from_user.id)
+
+    notice = await query.message.reply_text(t(lang, "status_telegraph"))
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                f"{API_URL}/articles/{article_id}/telegraph",
+                params={"user_id": user_id, "lang": lang},
+            )
+    except httpx.RequestError:
+        await notice.edit_text(t(lang, "server_error"))
+        return
+
+    if resp.status_code == 404:
+        await notice.edit_text(t(lang, "article_not_found"))
+        return
+    if resp.status_code != 200:
+        await notice.edit_text(t(lang, "read_telegraph_error"))
+        return
+
+    url = resp.json()["url"]
+    await notice.edit_text(t(lang, "read_telegraph_ready", url=url))
+
+
 async def handle_format(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -969,6 +1036,8 @@ def main() -> None:
     app.add_handler(CommandHandler("failed", failed_cmd))
     app.add_handler(CallbackQueryHandler(handle_history_page, pattern=r"^histpage:"))
     app.add_handler(CallbackQueryHandler(handle_history_select, pattern=r"^hist:"))
+    app.add_handler(CallbackQueryHandler(handle_read, pattern=r"^read:\d+$"))
+    app.add_handler(CallbackQueryHandler(handle_telegraph, pattern=r"^tgph:\d+$"))
     app.add_handler(CallbackQueryHandler(handle_format, pattern=r"^fmt:"))
     app.add_handler(CallbackQueryHandler(handle_delete, pattern=r"^del:\d+$"))
     app.add_handler(CallbackQueryHandler(handle_delete_confirm, pattern=r"^delconfirm:"))

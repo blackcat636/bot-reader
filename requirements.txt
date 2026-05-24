@@ -2,6 +2,7 @@ python-telegram-bot==21.9
 httpx==0.27.2
 python-dotenv==1.0.1
 readability-lxml==0.8.1
+lxml
 lxml_html_clean
 html2text
 aiosqlite

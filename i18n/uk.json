@@ -5,6 +5,7 @@
   "status_fetching": "⏳ Завантажую сторінку…",
   "status_extracting": "📖 Виділяю текст статті…",
   "status_generating": "⏳ Генерую файл…",
+  "status_telegraph": "⏳ Готую сторінку для читання…",
 
   "history_empty": "Історія порожня. Надішли посилання на статтю — я збережу її.",
   "history_header": "Збережені статті (всього: {total}):",
@@ -15,11 +16,16 @@
   "find_empty": "Нічого не знайдено за запитом «{query}».",
   "find_header": "Результати пошуку «{query}»:",
 
+  "format_read": "📖 Читати тут",
+  "format_telegraph": "⚡ Instant View",
   "format_pdf": "📄 PDF",
   "format_md": "📝 Markdown",
   "format_html": "🌐 HTML",
   "format_epub": "📚 EPUB",
   "format_share": "📤 Поділитись",
+
+  "read_telegraph_ready": "⚡ Стаття у режимі читача Telegram:\n{url}",
+  "read_telegraph_error": "❌ Не вдалося створити сторінку для читання. Спробуй ще раз.",
 
   "article_not_found": "❌ Стаття не знайдена. Надішли посилання ще раз.",
   "server_error": "❌ Не вдалося зв'язатися з сервером. Спробуй ще раз.",
@@ -52,6 +58,7 @@
   "err_article_not_found": "Стаття не знайдена.",
   "err_format_invalid": "Формат має бути одним з: {formats}.",
   "err_generate": "Помилка генерації файлу.",
+  "err_telegraph": "Не вдалося опублікувати сторінку для читання.",
   "err_invalid_code": "Код не знайдено.",
   "err_expired_code": "Код застарів. Згенеруй новий.",
   "err_same_group": "Ці акаунти вже пов'язані.",

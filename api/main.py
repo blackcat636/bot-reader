@@ -19,10 +19,12 @@ from .db import (
     get_user_lang, set_user_lang,
     touch_user, is_user_banned, set_user_banned, list_users, count_users,
     get_admin_stats, log_failed_url, list_failed_urls, count_failed_urls,
-    get_article_any, delete_article_any,
+    get_article_any, delete_article_any, set_article_telegraph_url,
 )
 from .extractor import fetch_and_extract, ExtractError
 from .i18n import t, normalize
+from .telegram_view import html_to_chunks, html_to_telegraph_nodes
+from .telegraph import create_page, TelegraphError
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -161,6 +163,43 @@ async def download(article_id: int, format: str, user_id: str, lang: str = "en")
     if not article:
         raise HTTPException(status_code=404, detail=t(lang, "err_article_not_found"))
     return await _render_download(article, format, lang)
+
+
+@app.get("/articles/{article_id}/read")
+async def read_article(article_id: int, user_id: str, lang: str = "en"):
+    """Стаття як список Telegram-HTML повідомлень для читання прямо в чаті."""
+    lang = normalize(lang)
+    article = await get_article(article_id, user_id)
+    if not article:
+        raise HTTPException(status_code=404, detail=t(lang, "err_article_not_found"))
+    # lxml-парсинг CPU-bound — у потік, як і генерація файлів.
+    chunks = await asyncio.to_thread(
+        html_to_chunks, article["content_html"], article["title"], article["url"]
+    )
+    return {"chunks": chunks}
+
+
+@app.post("/articles/{article_id}/telegraph")
+async def telegraph_article(article_id: int, user_id: str, lang: str = "en"):
+    """Публікує статтю на telegra.ph (для Instant View). Кешує URL у БД."""
+    lang = normalize(lang)
+    article = await get_article(article_id, user_id)
+    if not article:
+        raise HTTPException(status_code=404, detail=t(lang, "err_article_not_found"))
+    if article.get("telegraph_url"):
+        return {"url": article["telegraph_url"]}
+
+    nodes = await asyncio.to_thread(
+        html_to_telegraph_nodes, article["content_html"], article["url"]
+    )
+    try:
+        url = await create_page(article["title"], nodes)
+    except (TelegraphError, httpx.HTTPError):
+        logger.exception("Telegraph publish failed for article %d", article_id)
+        raise HTTPException(status_code=502, detail=t(lang, "err_telegraph"))
+
+    await set_article_telegraph_url(article_id, url)
+    return {"url": url}
 
 
 @app.get("/history")

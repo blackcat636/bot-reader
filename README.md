@@ -2,6 +2,10 @@
 
 Сервіс для читання статей без реклами, банерів і коментарів. Використовує алгоритм Mozilla Readability і повертає чистий файл у форматі PDF, Markdown, HTML або EPUB.
 
+Статтю також можна **читати прямо в Telegram**, не завантажуючи файл:
+- 📖 **Читати тут** — текст приходить повідомленнями просто в чат (приватно, нічого назовні).
+- ⚡ **Instant View** — стаття публікується на telegra.ph і відкривається нативною читалкою Telegram (краще форматування й картинки, але контент лежить на зовнішньому сервісі).
+
 Складається з двох клієнтів на спільному FastAPI бекенді:
 - **Telegram бот** — надішли URL, отримай файл
 - **Chrome розширення** — кнопка прямо на сторінці
@@ -20,6 +24,8 @@ reader-bot/
 │   ├── main.py             # Endpoints
 │   ├── extractor.py        # fetch + Mozilla Readability
 │   ├── converter.py        # PDF / MD / HTML / EPUB
+│   ├── telegram_view.py    # content_html → Telegram-HTML чанки / Telegraph-вузли
+│   ├── telegraph.py        # async-клієнт telegra.ph (Instant View)
 │   └── db.py               # SQLite (aiosqlite)
 ├── bot/
 │   └── bot.py              # Telegram бот (HTTP клієнт до API)
