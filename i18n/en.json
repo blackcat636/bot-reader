@@ -45,6 +45,7 @@
 
   "err_not_html": "The link leads to a non-HTML page (possibly an image or file).",
   "err_no_content": "Could not extract article text — possibly paywalled or requires login.",
+  "err_blocked": "The site is protected by an anti-bot system (e.g. Cloudflare) that could not be bypassed.",
   "err_timeout": "Request timed out. The site is responding too slowly.",
   "err_http": "Server returned an error: {code}.",
   "err_request": "Could not connect to the site.",
@@ -70,5 +71,32 @@
   "nav_prev": "◀️ Back",
   "nav_next": "▶️ Next",
   "settings_lang_en": "🇬🇧 English",
-  "settings_lang_uk": "🇺🇦 Українська"
+  "settings_lang_uk": "🇺🇦 Українська",
+
+  "err_banned": "Your access to the bot has been restricted.",
+
+  "admin_denied": "⛔ This command is available to administrators only.",
+  "admin_menu": "🛠️ <b>Admin panel</b>\n\n/stats — summary statistics\n/users — user list (ban/unban)\n/failed — links that failed to load",
+  "admin_stats": "📊 <b>Statistics</b>\n\n👥 Users: <b>{total_users}</b> (TG: {telegram_users}, browser: {browser_users})\n🚫 Banned: {banned_users}\n🟢 Active in 7 days: {active_7d}\n📄 Articles: <b>{total_articles}</b>\n👨‍👩‍👧 Groups: {total_groups}\n⚠️ Failed links: {failed_urls}",
+  "admin_users_header": "👥 Users (total: {total}). Tap to open a card:",
+  "admin_user_card": "👤 <b>{name}</b>\n\nID: <code>{user_id}</code>\nType: {type}\nArticles: {articles}\nLanguage: {ulang}\nStatus: {status}\nRegistered: {created}\nLast active: {active}",
+  "admin_status_active": "🟢 active",
+  "admin_status_banned": "🚫 banned",
+  "admin_ban_btn": "🚫 Ban",
+  "admin_unban_btn": "✅ Unban",
+  "admin_back_btn": "◀️ Back to list",
+  "admin_user_gone": "User not found.",
+  "admin_banned_done": "🚫 User <code>{user_id}</code> banned.",
+  "admin_unbanned_done": "✅ User <code>{user_id}</code> unbanned.",
+  "admin_failed_header": "⚠️ <b>Failed links</b> (total: {total}):",
+  "admin_failed_empty": "✅ No failed links.",
+
+  "admin_articles_btn": "📄 Articles",
+  "admin_back_users_btn": "◀️ Back to users",
+  "admin_back_articles_btn": "◀️ Back to articles",
+  "admin_user_articles_header": "📄 User's articles (total: {total}). Tap to open:",
+  "admin_user_articles_empty": "This user has no saved articles.",
+  "admin_article_card": "📄 <b>{title}</b>\n\n🔗 {url}\n📅 {created}\n\nChoose an action:",
+  "admin_article_delete_confirm": "🗑️ Delete article <b>{title}</b>?\n\nThis cannot be undone.",
+  "admin_article_deleted": "✅ Article deleted."
 }

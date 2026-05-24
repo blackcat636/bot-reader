@@ -154,7 +154,8 @@ def build_page_html(title: str, url: str, content_html: str, inline_css: str = "
 </html>"""
 
 
-async def generate_file(title: str, url: str, content_html: str, fmt: str) -> tuple[bytes, str]:
+def generate_file(title: str, url: str, content_html: str, fmt: str) -> tuple[bytes, str]:
+    """Синхронна: weasyprint/html2text/ebooklib — CPU-важкі. Виклик через asyncio.to_thread."""
     tmp_path = None
     try:
         if fmt == "pdf":

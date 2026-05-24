@@ -11,6 +11,27 @@ services:
     environment:
       VIRTUAL_HOST: ${API_DOMAIN:-}
       LETSENCRYPT_HOST: ${API_DOMAIN:-}
+      RENDERER_URL: http://renderer:8001
+    depends_on:
+      - renderer
+
+  renderer:
+    build:
+      context: .
+      dockerfile: renderer/Dockerfile
+    # --loop asyncio (не uvloop): playwright/camoufox subprocess-транспорт нестабільний з uvloop.
+    command: uvicorn renderer.main:app --host 0.0.0.0 --port 8001 --loop asyncio
+    restart: unless-stopped
+    # tini як PID 1 реапить зомбі-процеси Firefox (крашлі браузери інакше накопичуються).
+    init: true
+    expose:
+      - "8001"
+    env_file: .env
+    # chromium падає на маленькому /dev/shm — даємо більше.
+    shm_size: "1gb"
+    environment:
+      CAPTCHA_PROVIDER: ${CAPTCHA_PROVIDER:-}
+      CAPTCHA_API_KEY: ${CAPTCHA_API_KEY:-}
 
   bot:
     build: .

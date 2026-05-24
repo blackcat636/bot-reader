@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from urllib.parse import quote
 
@@ -16,6 +17,9 @@ from .db import (
     create_link_code, preview_link, confirm_link,
     create_share_code, revoke_share_code, claim_share_code,
     get_user_lang, set_user_lang,
+    touch_user, is_user_banned, set_user_banned, list_users, count_users,
+    get_admin_stats, log_failed_url, list_failed_urls, count_failed_urls,
+    get_article_any, delete_article_any,
 )
 from .extractor import fetch_and_extract, ExtractError
 from .i18n import t, normalize
@@ -25,6 +29,14 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
+
+# Telegram id адмінів, через кому. Спільний з ботом (той самий ENV).
+ADMIN_IDS = {a.strip() for a in os.getenv("ADMIN_IDS", "").split(",") if a.strip()}
+
+
+def _require_admin(admin_id: str) -> None:
+    if admin_id not in ADMIN_IDS:
+        raise HTTPException(status_code=403, detail="forbidden")
 
 
 async def _cleanup_loop():
@@ -57,12 +69,17 @@ class ExtractRequest(BaseModel):
     user_id: str
     user_type: str = "browser"
     lang: str = "en"
+    username: str | None = None
 
 
 @app.post("/extract")
 async def extract(req: ExtractRequest):
     lang = normalize(req.lang)
     await get_or_create_user(req.user_id, req.user_type, lang=lang)
+    await touch_user(req.user_id, req.username)
+
+    if await is_user_banned(req.user_id):
+        raise HTTPException(status_code=403, detail=t(lang, "err_banned"))
 
     existing = await get_article_by_url(req.user_id, req.url)
     if existing:
@@ -71,12 +88,16 @@ async def extract(req: ExtractRequest):
     try:
         article = await fetch_and_extract(req.url)
     except ExtractError as e:
+        await log_failed_url(req.user_id, req.url, str(e))
         raise HTTPException(status_code=400, detail=t(lang, f"err_{e}"))
     except httpx.TimeoutException:
+        await log_failed_url(req.user_id, req.url, "timeout")
         raise HTTPException(status_code=408, detail=t(lang, "err_timeout"))
     except httpx.HTTPStatusError as e:
+        await log_failed_url(req.user_id, req.url, f"http_{e.response.status_code}")
         raise HTTPException(status_code=502, detail=t(lang, "err_http", code=e.response.status_code))
     except httpx.RequestError:
+        await log_failed_url(req.user_id, req.url, "request_error")
         raise HTTPException(status_code=502, detail=t(lang, "err_request"))
 
     article_id = await save_article(
@@ -108,25 +129,20 @@ async def delete_article_endpoint(article_id: int, user_id: str, lang: str = "en
     return {"ok": True}
 
 
-@app.get("/articles/{article_id}/download")
-async def download(article_id: int, format: str, user_id: str, lang: str = "en"):
-    lang = normalize(lang)
+async def _render_download(article: dict, format: str, lang: str) -> Response:
+    """Генерує файл зі статті у потрібному форматі та повертає Response.
+    Спільне для звичайного й адмінського download (вони різняться лише авторизацією)."""
     if format not in MEDIA_TYPES:
         raise HTTPException(
             status_code=400,
             detail=t(lang, "err_format_invalid", formats=", ".join(MEDIA_TYPES)),
         )
-
-    article = await get_article(article_id, user_id)
-    if not article:
-        raise HTTPException(status_code=404, detail=t(lang, "err_article_not_found"))
-
     try:
-        data, filename = await generate_file(
-            article["title"], article["url"], article["content_html"], format
+        data, filename = await asyncio.to_thread(
+            generate_file, article["title"], article["url"], article["content_html"], format
         )
     except Exception:
-        logger.exception("Error generating %s for article %d", format, article_id)
+        logger.exception("Error generating %s for article %d", format, article["id"])
         raise HTTPException(status_code=500, detail=t(lang, "err_generate"))
 
     ascii_name = filename.encode("ascii", "ignore").decode("ascii") or "article"
@@ -136,6 +152,15 @@ async def download(article_id: int, format: str, user_id: str, lang: str = "en")
         media_type=MEDIA_TYPES[format],
         headers={"Content-Disposition": f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{encoded_name}'},
     )
+
+
+@app.get("/articles/{article_id}/download")
+async def download(article_id: int, format: str, user_id: str, lang: str = "en"):
+    lang = normalize(lang)
+    article = await get_article(article_id, user_id)
+    if not article:
+        raise HTTPException(status_code=404, detail=t(lang, "err_article_not_found"))
+    return await _render_download(article, format, lang)
 
 
 @app.get("/history")
@@ -235,3 +260,90 @@ async def patch_user_lang(user_id: str, lang: str, user_type: str = "browser"):
     await get_or_create_user(user_id, user_type, lang=normalized)
     await set_user_lang(user_id, normalized)
     return {"lang": normalized}
+
+
+# --- Admin --------------------------------------------------------------
+# Усі /admin/* вимагають admin_id з ADMIN_IDS (ENV, спільний з ботом).
+
+@app.get("/admin/whoami")
+async def admin_whoami(admin_id: str):
+    return {"is_admin": admin_id in ADMIN_IDS}
+
+
+@app.get("/admin/stats")
+async def admin_stats(admin_id: str):
+    _require_admin(admin_id)
+    return await get_admin_stats()
+
+
+@app.get("/admin/users")
+async def admin_users(admin_id: str, limit: int = 10, offset: int = 0):
+    _require_admin(admin_id)
+    items = await list_users(limit=limit, offset=offset)
+    total = await count_users()
+    return {"items": items, "total": total, "offset": offset, "limit": limit}
+
+
+@app.post("/admin/users/{user_id}/ban")
+async def admin_ban(user_id: str, admin_id: str):
+    _require_admin(admin_id)
+    if not await set_user_banned(user_id, True):
+        raise HTTPException(status_code=404, detail="user_not_found")
+    return {"ok": True, "banned": True}
+
+
+@app.post("/admin/users/{user_id}/unban")
+async def admin_unban(user_id: str, admin_id: str):
+    _require_admin(admin_id)
+    if not await set_user_banned(user_id, False):
+        raise HTTPException(status_code=404, detail="user_not_found")
+    return {"ok": True, "banned": False}
+
+
+@app.get("/admin/failed")
+async def admin_failed(admin_id: str, limit: int = 10, offset: int = 0):
+    _require_admin(admin_id)
+    items = await list_failed_urls(limit=limit, offset=offset)
+    total = await count_failed_urls()
+    return {"items": items, "total": total, "offset": offset, "limit": limit}
+
+
+@app.get("/admin/users/{user_id}/articles")
+async def admin_user_articles(user_id: str, admin_id: str, limit: int = 10, offset: int = 0):
+    _require_admin(admin_id)
+    # get_user_history джойнить через групу юзера → це всі статті, видимі цьому юзеру.
+    items = await get_user_history(user_id, limit=limit, offset=offset)
+    total = await count_user_articles(user_id)
+    return {"items": items, "total": total, "offset": offset, "limit": limit}
+
+
+@app.get("/admin/articles/{article_id}")
+async def admin_article_info(article_id: int, admin_id: str):
+    _require_admin(admin_id)
+    article = await get_article_any(article_id)
+    if not article:
+        raise HTTPException(status_code=404, detail="article_not_found")
+    return {
+        "id": article["id"],
+        "title": article["title"],
+        "url": article["url"],
+        "created_at": article["created_at"],
+    }
+
+
+@app.get("/admin/articles/{article_id}/download")
+async def admin_article_download(article_id: int, format: str, admin_id: str, lang: str = "en"):
+    _require_admin(admin_id)
+    lang = normalize(lang)
+    article = await get_article_any(article_id)
+    if not article:
+        raise HTTPException(status_code=404, detail=t(lang, "err_article_not_found"))
+    return await _render_download(article, format, lang)
+
+
+@app.delete("/admin/articles/{article_id}")
+async def admin_article_delete(article_id: int, admin_id: str):
+    _require_admin(admin_id)
+    if not await delete_article_any(article_id):
+        raise HTTPException(status_code=404, detail="article_not_found")
+    return {"ok": True}

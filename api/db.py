@@ -24,6 +24,9 @@ async def init_db() -> None:
                 type TEXT NOT NULL CHECK(type IN ('telegram', 'browser')),
                 group_id INTEGER NOT NULL REFERENCES groups(id),
                 lang TEXT NOT NULL DEFAULT 'en',
+                username TEXT,
+                is_banned INTEGER NOT NULL DEFAULT 0,
+                last_active_at TEXT,
                 created_at TEXT NOT NULL
             )
         """)
@@ -34,6 +37,15 @@ async def init_db() -> None:
                 url TEXT NOT NULL,
                 title TEXT NOT NULL,
                 content_html TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS failed_urls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                url TEXT NOT NULL,
+                error TEXT NOT NULL,
                 created_at TEXT NOT NULL
             )
         """)
@@ -56,6 +68,7 @@ async def init_db() -> None:
         await db.execute("CREATE INDEX IF NOT EXISTS idx_articles_url ON articles(url)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_users_group_id ON users(group_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_users_user_id ON users(user_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_failed_urls_created ON failed_urls(created_at)")
         await db.commit()
 
     await _migrate()
@@ -84,6 +97,18 @@ async def _migrate() -> None:
 
         if "lang" not in columns:
             await db.execute("ALTER TABLE users ADD COLUMN lang TEXT NOT NULL DEFAULT 'en'")
+            await db.commit()
+
+        if "username" not in columns:
+            await db.execute("ALTER TABLE users ADD COLUMN username TEXT")
+            await db.commit()
+
+        if "is_banned" not in columns:
+            await db.execute("ALTER TABLE users ADD COLUMN is_banned INTEGER NOT NULL DEFAULT 0")
+            await db.commit()
+
+        if "last_active_at" not in columns:
+            await db.execute("ALTER TABLE users ADD COLUMN last_active_at TEXT")
             await db.commit()
 
 
@@ -183,6 +208,23 @@ async def get_article(article_id: int, user_id: str) -> dict | None:
             return dict(row) if row else None
 
 
+async def get_article_any(article_id: int) -> dict | None:
+    """Стаття за id без перевірки групи — лише для адмін-доступу."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM articles WHERE id = ?", (article_id,)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+
+async def delete_article_any(article_id: int) -> bool:
+    """Видаляє статтю за id без перевірки групи — лише для адмін-доступу."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("DELETE FROM articles WHERE id = ?", (article_id,))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
 async def get_user_history(user_id: str, limit: int = 10, offset: int = 0) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -228,6 +270,115 @@ async def search_articles(user_id: str, query: str, limit: int = 10) -> list[dic
             rows = await cursor.fetchall()
     q = query.lower()
     return [dict(r) for r in rows if q in r["title"].lower()][:limit]
+
+
+async def touch_user(user_id: str, username: str | None = None) -> None:
+    """Оновлює last_active_at (і username, якщо переданий) при активності юзера."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        if username is not None:
+            await db.execute(
+                "UPDATE users SET last_active_at = ?, username = ? WHERE user_id = ?",
+                (datetime.utcnow().isoformat(), username, user_id),
+            )
+        else:
+            await db.execute(
+                "UPDATE users SET last_active_at = ? WHERE user_id = ?",
+                (datetime.utcnow().isoformat(), user_id),
+            )
+        await db.commit()
+
+
+async def is_user_banned(user_id: str) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT is_banned FROM users WHERE user_id = ?", (user_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return bool(row[0]) if row else False
+
+
+async def set_user_banned(user_id: str, banned: bool) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "UPDATE users SET is_banned = ? WHERE user_id = ?",
+            (1 if banned else 0, user_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def count_users() -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT COUNT(*) FROM users") as cursor:
+            return (await cursor.fetchone())[0]
+
+
+async def list_users(limit: int = 10, offset: int = 0) -> list[dict]:
+    """Список юзерів з кількістю статей у їхній групі, найактивніші зверху."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT u.user_id, u.type, u.group_id, u.lang, u.username,
+                   u.is_banned, u.last_active_at, u.created_at,
+                   (SELECT COUNT(*) FROM articles a WHERE a.user_id = u.user_id) AS article_count
+            FROM users u
+            ORDER BY COALESCE(u.last_active_at, u.created_at) DESC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        ) as cursor:
+            return [dict(r) for r in await cursor.fetchall()]
+
+
+async def get_admin_stats() -> dict:
+    """Зведена статистика для адмін-панелі."""
+    week_ago = (datetime.utcnow() - timedelta(days=7)).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        async def scalar(sql: str, params: tuple = ()) -> int:
+            async with db.execute(sql, params) as c:
+                return (await c.fetchone())[0]
+
+        return {
+            "total_users": await scalar("SELECT COUNT(*) FROM users"),
+            "telegram_users": await scalar("SELECT COUNT(*) FROM users WHERE type = 'telegram'"),
+            "browser_users": await scalar("SELECT COUNT(*) FROM users WHERE type = 'browser'"),
+            "banned_users": await scalar("SELECT COUNT(*) FROM users WHERE is_banned = 1"),
+            "active_7d": await scalar(
+                "SELECT COUNT(*) FROM users WHERE last_active_at >= ?", (week_ago,)
+            ),
+            "total_articles": await scalar("SELECT COUNT(*) FROM articles"),
+            "total_groups": await scalar("SELECT COUNT(*) FROM groups"),
+            "failed_urls": await scalar("SELECT COUNT(*) FROM failed_urls"),
+        }
+
+
+async def log_failed_url(user_id: str, url: str, error: str) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO failed_urls (user_id, url, error, created_at) VALUES (?, ?, ?, ?)",
+            (user_id, url, error, datetime.utcnow().isoformat()),
+        )
+        await db.commit()
+
+
+async def count_failed_urls() -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT COUNT(*) FROM failed_urls") as cursor:
+            return (await cursor.fetchone())[0]
+
+
+async def list_failed_urls(limit: int = 10, offset: int = 0) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT id, user_id, url, error, created_at FROM failed_urls
+            ORDER BY created_at DESC LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        ) as cursor:
+            return [dict(r) for r in await cursor.fetchall()]
 
 
 async def cleanup_expired_codes() -> int:

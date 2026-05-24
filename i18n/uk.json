@@ -45,6 +45,7 @@
 
   "err_not_html": "Посилання веде не на HTML-сторінку (можливо, це зображення або файл).",
   "err_no_content": "Не вдалося виділити текст статті — можливо, сторінка захищена або потребує авторизації.",
+  "err_blocked": "Сайт захищений анти-бот системою (напр. Cloudflare), яку не вдалося обійти.",
   "err_timeout": "Час очікування вичерпано. Сайт відповідає надто повільно.",
   "err_http": "Сервер повернув помилку: {code}.",
   "err_request": "Не вдалося підключитися до сайту.",
@@ -70,5 +71,32 @@
   "nav_prev": "◀️ Назад",
   "nav_next": "▶️ Далі",
   "settings_lang_en": "🇬🇧 English",
-  "settings_lang_uk": "🇺🇦 Українська"
+  "settings_lang_uk": "🇺🇦 Українська",
+
+  "err_banned": "Ваш доступ до бота обмежено.",
+
+  "admin_denied": "⛔ Команда доступна лише адміністраторам.",
+  "admin_menu": "🛠️ <b>Панель адміністратора</b>\n\n/stats — зведена статистика\n/users — список користувачів (бан/розбан)\n/failed — посилання, які не вдалося завантажити",
+  "admin_stats": "📊 <b>Статистика</b>\n\n👥 Користувачів: <b>{total_users}</b> (TG: {telegram_users}, браузер: {browser_users})\n🚫 Заблоковано: {banned_users}\n🟢 Активні за 7 днів: {active_7d}\n📄 Статей: <b>{total_articles}</b>\n👨‍👩‍👧 Груп: {total_groups}\n⚠️ Невдалих посилань: {failed_urls}",
+  "admin_users_header": "👥 Користувачі (всього: {total}). Натисніть, щоб відкрити картку:",
+  "admin_user_card": "👤 <b>{name}</b>\n\nID: <code>{user_id}</code>\nТип: {type}\nСтатей: {articles}\nМова: {ulang}\nСтатус: {status}\nЗареєстрований: {created}\nАктивність: {active}",
+  "admin_status_active": "🟢 активний",
+  "admin_status_banned": "🚫 заблокований",
+  "admin_ban_btn": "🚫 Заблокувати",
+  "admin_unban_btn": "✅ Розблокувати",
+  "admin_back_btn": "◀️ До списку",
+  "admin_user_gone": "Користувача не знайдено.",
+  "admin_banned_done": "🚫 Користувача <code>{user_id}</code> заблоковано.",
+  "admin_unbanned_done": "✅ Користувача <code>{user_id}</code> розблоковано.",
+  "admin_failed_header": "⚠️ <b>Невдалі посилання</b> (всього: {total}):",
+  "admin_failed_empty": "✅ Невдалих посилань немає.",
+
+  "admin_articles_btn": "📄 Статті",
+  "admin_back_users_btn": "◀️ До користувачів",
+  "admin_back_articles_btn": "◀️ До статей",
+  "admin_user_articles_header": "📄 Статті користувача (всього: {total}). Натисніть, щоб відкрити:",
+  "admin_user_articles_empty": "У цього користувача немає збережених статей.",
+  "admin_article_card": "📄 <b>{title}</b>\n\n🔗 {url}\n📅 {created}\n\nОберіть дію:",
+  "admin_article_delete_confirm": "🗑️ Видалити статтю <b>{title}</b>?\n\nДію не можна скасувати.",
+  "admin_article_deleted": "✅ Статтю видалено."
 }

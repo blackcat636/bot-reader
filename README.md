@@ -6,6 +6,10 @@
 - **Telegram бот** — надішли URL, отримай файл
 - **Chrome розширення** — кнопка прямо на сторінці
 
+Завантаження сторінок **каскадне**: спершу швидкий HTTP-запит, а якщо сайт віддає
+порожнечу (JS-рендерена SPA) або блокує бота (Cloudflare 403/«Just a moment…») —
+сторінка догружається справжнім headless-браузером (сервіс `renderer`).
+
 ---
 
 ## Структура проекту
@@ -19,6 +23,10 @@ reader-bot/
 │   └── db.py               # SQLite (aiosqlite)
 ├── bot/
 │   └── bot.py              # Telegram бот (HTTP клієнт до API)
+├── renderer/               # Headless-браузер (Playwright) для JS/Cloudflare
+│   ├── main.py             # POST /render → відрендерений HTML
+│   ├── solver.py           # опційний гачок під капч-солвер (вимкнений)
+│   └── Dockerfile          # власний образ на базі playwright/python
 ├── extension/
 │   ├── manifest.json       # Chrome Extension Manifest V3
 │   ├── popup.html
@@ -46,7 +54,9 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Запускається два контейнери: `api` (порт 8000, тільки всередині Docker-мережі) і `bot`.
+Запускається три контейнери: `api` (порт 8000, тільки всередині Docker-мережі), `bot`
+і `renderer` (headless-браузер, порт 8001 у Docker-мережі). Перша збірка `renderer`
+довша — тягне образ Playwright з chromium (~1.5 ГБ), зате образи `api`/`bot` лишаються легкими.
 
 ### 3. З Cloudflare Tunnel
 
@@ -83,9 +93,47 @@ API_DOMAIN=reader.your-domain.com
 | Змінна | Обов'язкова | Опис |
 |---|---|---|
 | `BOT_TOKEN` | ✅ | Токен від [@BotFather](https://t.me/BotFather) |
+| `ADMIN_IDS` | — | Telegram id адміністраторів через кому. Вмикає команди `/admin`, `/users`, `/stats`, `/failed`. Свій id — через [@userinfobot](https://t.me/userinfobot) |
 | `DB_PATH` | — | Шлях до SQLite (за замовчуванням `/app/data/articles.db`) |
 | `API_DOMAIN` | — | Домен для nginx-proxy + Let's Encrypt |
 | `CLOUDFLARE_TUNNEL_TOKEN` | — | Токен Cloudflare Tunnel |
+| `RENDERER_URL` | — | URL рендерера (compose задає `http://renderer:8001`; порожнє вимикає браузерний фолбек) |
+| `CAPTCHA_PROVIDER` | — | Провайдер капч-солвера (`2captcha`). Вимкнено, якщо не задано |
+| `CAPTCHA_API_KEY` | — | Ключ API солвера. Вмикає гачок розвʼязання капч (див. нижче) |
+
+---
+
+## JS-сайти, Cloudflare і капчі
+
+Якщо прямий HTTP-запит повертає порожнечу, заглушку анти-бота, 403/429/503 або обрив/таймаут,
+`api` звертається до сервісу `renderer` — це **camoufox** (анти-детект Firefox), який:
+
+- виконує JavaScript, тож працюють SPA без SSR;
+- проходить **JS/Cloudflare-челенджі**, включно з клікабельним Turnstile («Трохи зачекайте…»),
+  безкоштовно, без зовнішніх сервісів.
+
+**Надійність на сайтах із Cloudflare managed Turnstile (напр. dou.ua) — часткова (~½).**
+camoufox рандомізує фінгерпринт на кожен запуск, тож `renderer` повторює спробу зі свіжим
+браузером (`RENDER_ATTEMPTS`); частина спроб усе одно впирається в баг драйвера playwright-Firefox.
+Звичайні сайти, SPA та мʼякі челенджі — стабільні. Якщо челендж не пройдено, бот повертає
+зрозуміле «сайт захищено», а не сміття. Для гарантованого обходу таких сайтів — платний
+солвер (нижче).
+
+### Капч-солвер (експериментально, вимкнено за замовчуванням)
+
+⚠️ Інтерактивні капчі (reCAPTCHA з картинками, hCaptcha) алгоритмічно не вирішуються.
+Гачок `renderer/solver.py` може делегувати їх **платному зовнішньому сервісу** (наразі
+скелет під [2captcha](https://2captcha.com) — людська ферма). Це **коштує гроші** за
+кожен розвʼязок і часто **порушує Terms of Service** сайту. Вмикати лише за наявності
+чіткого дозволу на конкретний ресурс:
+
+```env
+CAPTCHA_PROVIDER=2captcha
+CAPTCHA_API_KEY=your_key
+```
+
+Без цих змінних солвер — no-op: сайт із капчею просто коректно завершується помилкою
+«не вдалося виділити текст».
 
 ---
 
@@ -104,6 +152,14 @@ API_DOMAIN=reader.your-domain.com
 | `POST` | `/share/generate`, `/share/claim`, `DELETE /share/{code}` | Поділитися статтею (одноразовий 8-символьний код) |
 | `POST` | `/link/generate`, `/link/confirm`, `GET /link/preview` | Об'єднати акаунти (6-символьний код, 10 хв) |
 | `GET` | `/users/{id}`, `PATCH /users/{id}/lang` | Мова користувача |
+| `GET` | `/admin/stats?admin_id=` | Зведена статистика (тільки адмін) |
+| `GET` | `/admin/users?admin_id=&limit=&offset=` | Список користувачів з кількістю статей (тільки адмін) |
+| `POST` | `/admin/users/{id}/ban`, `/admin/users/{id}/unban` `?admin_id=` | Блокування / розблокування (тільки адмін) |
+| `GET` | `/admin/failed?admin_id=&limit=&offset=` | Лог невдалих посилань (тільки адмін) |
+| `GET` | `/admin/users/{id}/articles?admin_id=&limit=&offset=` | Статті користувача (тільки адмін) |
+| `GET` | `/admin/articles/{id}?admin_id=` | Інфо про статтю без перевірки групи (тільки адмін) |
+| `GET` | `/admin/articles/{id}/download?format=&admin_id=` | Скачати статтю користувача (тільки адмін) |
+| `DELETE` | `/admin/articles/{id}?admin_id=` | Видалити будь-яку статтю (тільки адмін) |
 
 ### Приклад
 
@@ -134,6 +190,19 @@ curl "https://reader.your-domain.com/articles/1/download?format=pdf&user_id=test
 | 8-символьний код | Прийняти статтю, якою з тобою поділилися |
 | 6-символьний код | Підтвердити об'єднання акаунтів |
 
+### Команди адміністратора
+
+Доступні лише користувачам зі списку `ADMIN_IDS`.
+
+| Команда | Опис |
+|---|---|
+| `/admin` | Меню адміністратора з переліком команд |
+| `/stats` | Зведена статистика: користувачі, статті, активність, заблоковані |
+| `/users` | Список користувачів; натисни на користувача → картка з кнопками бан/розбан і 📄 Статті |
+| `/failed` | Посилання, які не вдалося завантажити (для розбору проблемних сайтів) |
+
+З картки користувача → **📄 Статті** адмін бачить усі статті цього користувача, може відкрити будь-яку, завантажити в PDF / MD / HTML / EPUB або видалити.
+
 ---
 
 ## Chrome розширення
@@ -154,7 +223,9 @@ curl "https://reader.your-domain.com/articles/1/download?format=pdf&user_id=test
 ```bash
 docker compose logs -f                        # логи всіх сервісів
 docker compose logs -f api                    # логи тільки API
+docker compose logs -f renderer               # логи браузерного рендерера
 docker compose restart api                    # перезапустити API
+docker compose up -d --build renderer         # перезібрати тільки renderer
 docker compose --profile tunnel up -d         # запуск з тунелем
 docker compose down                           # зупинка
 ```
@@ -169,6 +240,7 @@ docker compose down                           # зупинка
 | `python-telegram-bot` | Telegram Bot API |
 | `httpx` | Завантаження сторінок |
 | `readability-lxml` | Mozilla Readability — виділення тексту |
+| `camoufox` | Анти-детект Firefox (сервіс `renderer`) для JS/Cloudflare |
 | `weasyprint` | HTML → PDF |
 | `html2text` | HTML → Markdown |
 | `ebooklib` | Генерація EPUB |

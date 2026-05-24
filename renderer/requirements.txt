@@ -1,0 +1,5 @@
+# camoufox — анти-детект Firefox (тягне сумісний playwright як залежність).
+camoufox
+fastapi
+uvicorn[standard]
+httpx==0.27.2
