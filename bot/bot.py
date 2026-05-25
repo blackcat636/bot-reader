@@ -581,7 +581,9 @@ async def handle_format(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     fmt, article_id = parts[1], int(parts[2])
     user_id = str(query.from_user.id)
 
-    await query.edit_message_text(t(lang, "status_generating"))
+    # Окреме статусне повідомлення — картку з кнопками лишаємо, щоб одразу
+    # можна було обрати інший формат після завантаження файлу.
+    status = await query.message.reply_text(t(lang, "status_generating"))
 
     try:
         async with httpx.AsyncClient(timeout=120) as client:
@@ -591,10 +593,10 @@ async def handle_format(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             )
 
         if resp.status_code == 404:
-            await query.edit_message_text(t(lang, "article_not_found"))
+            await status.edit_text(t(lang, "article_not_found"))
             return
         if resp.status_code != 200:
-            await query.edit_message_text(t(lang, "unexpected_error"))
+            await status.edit_text(t(lang, "unexpected_error"))
             return
 
         filename = "article"
@@ -615,7 +617,7 @@ async def handle_format(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     filename = ascii_name
 
         icons = {"pdf": "📄", "md": "📝", "html": "🌐", "epub": "📚"}
-        await query.delete_message()
+        await status.delete()
         await query.message.reply_document(
             document=resp.content,
             filename=filename,
@@ -624,7 +626,7 @@ async def handle_format(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     except Exception:
         logger.exception("Error downloading %s for article %d", fmt, article_id)
-        await query.edit_message_text(t(lang, "unexpected_error"))
+        await status.edit_text(t(lang, "unexpected_error"))
 
 
 # --- Admin --------------------------------------------------------------
@@ -927,7 +929,7 @@ async def handle_admin_format(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     _, fmt, article_id = query.data.split(":")
 
-    await query.edit_message_text(t(lang, "status_generating"))
+    status = await query.message.reply_text(t(lang, "status_generating"))
     try:
         async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.get(
@@ -935,10 +937,10 @@ async def handle_admin_format(update: Update, context: ContextTypes.DEFAULT_TYPE
                 params={"format": fmt, "admin_id": str(query.from_user.id), "lang": lang},
             )
         if resp.status_code == 404:
-            await query.edit_message_text(t(lang, "article_not_found"))
+            await status.edit_text(t(lang, "article_not_found"))
             return
         if resp.status_code != 200:
-            await query.edit_message_text(t(lang, "unexpected_error"))
+            await status.edit_text(t(lang, "unexpected_error"))
             return
 
         filename = "article"
@@ -959,7 +961,7 @@ async def handle_admin_format(update: Update, context: ContextTypes.DEFAULT_TYPE
                     filename = ascii_name
 
         icons = {"pdf": "📄", "md": "📝", "html": "🌐", "epub": "📚"}
-        await query.delete_message()
+        await status.delete()
         await query.message.reply_document(
             document=resp.content,
             filename=filename,
@@ -967,7 +969,7 @@ async def handle_admin_format(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
     except Exception:
         logger.exception("Admin error downloading %s for article %s", fmt, article_id)
-        await query.edit_message_text(t(lang, "unexpected_error"))
+        await status.edit_text(t(lang, "unexpected_error"))
 
 
 async def handle_admin_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
