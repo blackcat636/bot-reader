@@ -1,9 +1,16 @@
 import asyncio
+import logging
 import os
 import re
+from uuid import uuid4
 
 import httpx
 from readability import Document
+
+from .browser_agent import BrowserAgentUnavailable, fetch_html_via_get_page
+from .errors import ExtractError
+
+logger = logging.getLogger(__name__)
 
 FETCH_HEADERS = {
     "User-Agent": (
@@ -18,6 +25,11 @@ FETCH_HEADERS = {
 RENDERER_URL = os.getenv("RENDERER_URL", "http://renderer:8001").rstrip("/")
 RENDER_TIMEOUT = float(os.getenv("RENDER_TIMEOUT", "120"))
 
+# Бекенд браузерного фолбеку: `legacy` (локальний renderer) або `browser_agent`
+# (зовнішній browser-agent сервіс). При browser_agent + його недоступності —
+# auto-fallback на legacy renderer.
+EXTRACT_BACKEND = os.getenv("EXTRACT_BACKEND", "legacy").strip().lower()
+
 # HTTP-статуси, що зазвичай означають bot-блокування — варто перепробувати браузером.
 RETRYABLE_STATUSES = {403, 429, 503}
 
@@ -28,10 +40,6 @@ CHALLENGE_MARKERS = (
     "cf_chl_opt",
     "cdn-cgi/challenge-platform",
 )
-
-
-class ExtractError(Exception):
-    pass
 
 
 def _looks_blocked(html: str) -> bool:
@@ -46,9 +54,13 @@ def _extract_from_html(html: str) -> dict:
     title = doc.title() or "Стаття"
     content_html = doc.summary(html_partial=True)
 
-    if not content_html or len(re.sub(r'<[^>]+>', '', content_html).strip()) < 200:
+    text_len = len(re.sub(r'<[^>]+>', '', content_html).strip()) if content_html else 0
+    logger.debug("_extract_from_html: title=%r text_len=%d", title, text_len)
+    if not content_html or text_len < 200:
+        logger.info("_extract_from_html: no_content (text_len=%d, title=%r)", text_len, title)
         raise ExtractError("no_content")
 
+    logger.info("_extract_from_html: OK title=%r text_len=%d", title, text_len)
     return {"title": title, "content_html": content_html}
 
 
@@ -96,7 +108,24 @@ async def fetch_and_extract(url: str) -> dict:
 
 
 async def _fallback_or_raise(url: str, original: Exception) -> dict:
-    """Спробувати браузерний рендеринг; якщо він недоступний — прокинути вихідну помилку."""
+    """Спробувати браузерний рендеринг; якщо він недоступний — прокинути вихідну помилку.
+
+    Гілки:
+      EXTRACT_BACKEND=browser_agent → POST у browser-agent (`generic/get_page`).
+        BrowserAgentUnavailable (мережа/5xx) → auto-fallback на локальний renderer.
+        ExtractError від BA (blocked/no_content/timeout) — кінцева, без fallback.
+      EXTRACT_BACKEND=legacy (default) → локальний renderer.
+    """
+    if EXTRACT_BACKEND == "browser_agent":
+        try:
+            html = await fetch_html_via_get_page(url, extract_id=str(uuid4()))
+        except BrowserAgentUnavailable as e:
+            logger.warning("browser-agent unavailable, falling back to renderer: %s", e)
+        else:
+            logger.info("browser-agent returned html len=%d for url=%s", len(html), url)
+            # BA повернув html; readability у потоці.
+            return await asyncio.to_thread(_extract_from_html, html)
+
     if not RENDERER_URL:
         raise original
     try:

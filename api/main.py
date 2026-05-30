@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from urllib.parse import quote
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -21,8 +21,11 @@ from .db import (
     get_admin_stats, log_failed_url, list_failed_urls, count_failed_urls,
     get_article_any, delete_article_any, set_article_telegraph_url,
 )
-from .extractor import fetch_and_extract, ExtractError
+from .browser_agent import PARSER_CALLBACK_SECRET, PARSER_WAIT_TIMEOUT_SEC
+from .errors import ExtractError
+from .extractor import fetch_and_extract
 from .i18n import t, normalize
+from .pending_extracts import pending_extracts
 from .telegram_view import html_to_chunks, html_to_telegraph_nodes
 from .telegraph import create_page, TelegraphError
 
@@ -53,6 +56,9 @@ async def _cleanup_loop():
 async def lifespan(app: FastAPI):
     await init_db()
     asyncio.create_task(_cleanup_loop())
+    # cleanup протухлих Future у реєстрі pending_extracts (browser-agent fallback).
+    # max_age = 2× wait timeout: гарантовано довше за нормальне завершення задачі.
+    asyncio.create_task(pending_extracts.cleanup_loop(PARSER_WAIT_TIMEOUT_SEC * 2))
     yield
 
 
@@ -106,6 +112,44 @@ async def extract(req: ExtractRequest):
         req.user_id, req.url, article["title"], article["content_html"]
     )
     return {"id": article_id, "title": article["title"], "url": req.url}
+
+
+@app.post("/internal/parser-callback")
+async def parser_callback(request: Request):
+    """Callback від browser-agent із результатом `generic/get_page`.
+
+    Лише фінальні chunks (`finished: true`) резолвлять Future в pending_extracts;
+    проміжні батчі (для discovery-сценаріїв) ігноруються. Завжди повертаємо 200,
+    щоб BA не ретраїв даремно.
+    """
+    if PARSER_CALLBACK_SECRET:
+        auth = request.headers.get("authorization", "")
+        if auth != f"Bearer {PARSER_CALLBACK_SECRET}":
+            raise HTTPException(status_code=401, detail="unauthorized")
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid json")
+
+    extract_id = (body.get("context") or {}).get("extractId")
+    if not extract_id or not body.get("finished"):
+        return {"ok": True}  # проміжний батч або не наша задача
+
+    chunk_type = body.get("chunkType")
+    logger.info("parser-callback extract=%s chunkType=%s", extract_id, chunk_type)
+
+    if chunk_type == "done":
+        html = body.get("html") or ""
+        _skip = {"chunkType", "finished", "engineUsed", "context"}
+        _loggable = {k: (f"<html len={len(v)}>" if k == "html" and isinstance(v, str) else v) for k, v in body.items() if k not in _skip}
+        logger.info("parser-callback fields: %s", _loggable)
+        await pending_extracts.resolve(extract_id, html)
+    else:
+        err = str(body.get("error") or "").lower()
+        code = "blocked" if "block" in err or "captcha" in err or "challenge" in err else "no_content"
+        logger.warning("parser-callback extract=%s chunkType=%s error=%r → %s", extract_id, chunk_type, body.get("error"), code)
+        await pending_extracts.reject(extract_id, ExtractError(code))
+    return {"ok": True}
 
 
 @app.get("/articles/{article_id}")

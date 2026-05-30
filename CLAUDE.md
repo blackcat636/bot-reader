@@ -26,8 +26,10 @@ A Telegram account and a browser can be **merged** (via `/link`) so both see the
 
 ### `api/` modules
 
-- `main.py` — FastAPI app + all endpoints. `lifespan` runs `init_db()` and a background loop
-  that purges expired link codes hourly. Endpoints: `/extract`, `/articles/{id}` (GET/DELETE),
+- `main.py` — FastAPI app + all endpoints. `lifespan` runs `init_db()`, the link-code cleanup loop,
+  and `pending_extracts.cleanup_loop` (sweeps Futures older than `PARSER_WAIT_TIMEOUT_SEC*2`).
+  Endpoints: `/extract`, `/internal/parser-callback` (browser-agent callback, Bearer-auth via
+  `PARSER_CALLBACK_SECRET` — only when set), `/articles/{id}` (GET/DELETE),
   `/articles/{id}/download`, `/articles/{id}/read` (Telegram-HTML chunks for in-chat reading),
   `/articles/{id}/telegraph` (publish to telegra.ph → Instant View URL), `/history`, `/search`,
   `/share/*`, `/link/*`, `/users/{id}` (lang), `/admin/*`. The `/admin/*` group (stats, users list, ban/unban, failed-URL log, plus per-user
@@ -41,10 +43,28 @@ A Telegram account and a browser can be **merged** (via `/link`) so both see the
 - `extractor.py` — `fetch_and_extract`: **cascade**. Fast path is `httpx` GET (desktop Chrome UA,
   30 s, redirects), rejects non-HTML, runs `_extract_from_html` (readability + the <200-char
   `ExtractError("no_content")` check). On `no_content`, HTTP 403/429/503, or timeout it falls back
-  to `_render_via_browser` (POST to `RENDERER_URL`, the `renderer` service) and re-runs the same
-  extractor on the rendered HTML. `not_html` and other request errors stay terminal. If the
-  renderer is unreachable the original error is re-raised (fallback silently disabled).
+  via `_fallback_or_raise`. Two backends (env `EXTRACT_BACKEND`):
+  - `legacy` (default) — POST to `RENDERER_URL`, the local `renderer` service.
+  - `browser_agent` — POST to external `browser-agent` via `api/browser_agent.py`
+    (`fetch_html_via_get_page`). If BA itself is unreachable (`BrowserAgentUnavailable`) the code
+    **silently sweeps to legacy `renderer`** as a safety net; BA's own errors (`blocked`,
+    `no_content`, `timeout`) are terminal.
+  In either mode the returned HTML is re-run through `_extract_from_html`. `not_html` stays
+  terminal. If the chosen fallback is fully unreachable the original error is re-raised.
   `_extract_from_html` (sync, CPU-bound readability) is always invoked via `asyncio.to_thread`.
+- `errors.py` — `ExtractError` lives here (was in `extractor.py`). Re-exported by `extractor` for
+  back-compat; `browser_agent.py` imports from `errors` directly to avoid a circular import.
+- `browser_agent.py` — client for external **browser-agent** (`generic/get_page`). `POST /api/run`
+  with `callback_url=PARSER_CALLBACK_BASE_URL/internal/parser-callback`,
+  `callback_headers={Authorization: Bearer PARSER_CALLBACK_SECRET}`, `callback_context={extractId}`.
+  Registers a Future in `pending_extracts` and races it against poll of `GET /api/tasks/{id}` —
+  whichever resolves first wins (poll-fallback for lost callbacks). `BrowserAgentUnavailable` is
+  the **only** exception that lets `extractor.py` sweep to legacy renderer; everything else
+  (blocked/no_content/timeout) is terminal.
+- `pending_extracts.py` — in-memory `{extract_id → asyncio.Future}` with `register/resolve/reject/
+  discard`. `resolve`/`reject` are idempotent (callback + poll may both fire). `cleanup_loop` runs
+  in `lifespan` and expires Futures older than `PARSER_WAIT_TIMEOUT_SEC*2` so a missed callback +
+  api restart doesn't leak Futures forever.
 - `converter.py` — `generate_file` renders the stored HTML into the four formats. It is a plain
   **sync** function (weasyprint/html2text/ebooklib are all CPU-bound) — `main.py` calls it via
   `asyncio.to_thread` so it never blocks the event loop. PDF/HTML use the module-level `READER_CSS`
@@ -143,8 +163,12 @@ both `api` and `bot` read it from `.env` via `env_file`, so it needs no `environ
 `DB_PATH`, `API_DOMAIN` (nginx-proxy), `CLOUDFLARE_TUNNEL_TOKEN` (tunnel profile),
 `CAPTCHA_PROVIDER` + `CAPTCHA_API_KEY` (renderer's captcha solver, off unless both set),
 `TELEGRAPH_TOKEN` (pin a telegra.ph account for Instant View; otherwise one is auto-created in
-memory). `API_URL` (bot→api) and `RENDERER_URL` (api→renderer) are injected by compose. No test
-suite, no linter.
+memory). `EXTRACT_BACKEND=browser_agent` swaps the fallback to external browser-agent and needs
+`BROWSER_AGENT_URL` + `BROWSER_AGENT_API_KEY` + `PARSER_CALLBACK_BASE_URL` (publicly-reachable URL
+of this api, e.g. cloudflared) + `PARSER_CALLBACK_SECRET`; tunables `PARSER_WAIT_TIMEOUT_SEC`
+(default 110, must be < bot's 130s), `PARSER_POLL_INTERVAL_SEC`, `PARSER_MAX_BYTES`,
+`PARSER_FORCE_TIER`. `API_URL` (bot→api) and `RENDERER_URL` (api→renderer) are injected by
+compose. No test suite, no linter.
 
 ## Compose services
 
@@ -174,7 +198,13 @@ suite, no linter.
   shared mutable state between handlers must be guarded (per-user `context.user_data` is fine).
 - **`Content-Disposition`** carries both `filename="<ascii>"` and `filename*=UTF-8''<encoded>`. The
   ASCII copy strips Cyrillic; clients must prefer `filename*` (the bot does, `bot/bot.py`).
-- **Fetch is a cascade** (`api/extractor.py`): httpx first, then the `renderer` browser on
+- **Two parser backends, env-switched** (`EXTRACT_BACKEND`): `legacy` keeps today's path (httpx →
+  local `renderer`). `browser_agent` swaps the fallback step for an external `browser-agent`
+  service (`generic/get_page`, async `POST /api/run` + callback to `/internal/parser-callback`
+  with poll fallback). If BA is unreachable, the code silently sweeps to `renderer`, so prod stays
+  resilient when BA flaps. Don't remove `depends_on: renderer` even on `browser_agent` mode — it's
+  the safety net. The fast `httpx` path is identical in both modes.
+- **Fetch is a cascade** (`api/extractor.py`): httpx first, then the configured browser backend on
   `no_content`/`blocked`/403·429·503/`RequestError`. `_looks_blocked` detects a Cloudflare
   interstitial (markers `cf_chl_opt`, `cdn-cgi/challenge-platform` — deliberately *not*
   `challenges.cloudflare.com`, which also appears on legit pages with a Turnstile widget) so the
