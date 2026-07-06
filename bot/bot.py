@@ -1,11 +1,12 @@
 import asyncio
 import logging
 import os
+import re
 from urllib.parse import urlparse, unquote
 
 import httpx
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, MessageEntity
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     CallbackQueryHandler, filters, ContextTypes,
@@ -67,6 +68,34 @@ def is_valid_url(text: str) -> bool:
         return parsed.scheme in ("http", "https") and bool(parsed.netloc)
     except Exception:
         return False
+
+
+RAW_URL_RE = re.compile(r"https?://\S+")
+
+
+def extract_url(message) -> str | None:
+    """Знаходить URL у повідомленні, навіть якщо це не суто посилання
+    (напр. "Заголовок статті / Сайт https://...", шер з браузера)."""
+    text = message.text or ""
+
+    if is_valid_url(text):
+        return text
+
+    for entity in message.entities or []:
+        if entity.type == MessageEntity.TEXT_LINK and entity.url:
+            return entity.url
+        if entity.type == MessageEntity.URL:
+            candidate = text[entity.offset:entity.offset + entity.length]
+            if is_valid_url(candidate):
+                return candidate
+
+    match = RAW_URL_RE.search(text)
+    if match:
+        candidate = match.group(0).rstrip(").,;!?\"'")
+        if is_valid_url(candidate):
+            return candidate
+
+    return None
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -470,7 +499,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await _do_search(update, lang, text)
         return
 
-    if not is_valid_url(text):
+    url = extract_url(update.message)
+    if url is None:
         await update.message.reply_text(t(lang, "not_a_url"))
         return
 
@@ -484,7 +514,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             resp = await client.post(
                 f"{API_URL}/extract",
                 json={
-                    "url": text, "user_id": user_id, "user_type": "telegram",
+                    "url": url, "user_id": user_id, "user_type": "telegram",
                     "lang": lang, "username": username,
                 },
             )
