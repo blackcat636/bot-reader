@@ -31,7 +31,7 @@ RENDER_TIMEOUT = float(os.getenv("RENDER_TIMEOUT", "120"))
 EXTRACT_BACKEND = os.getenv("EXTRACT_BACKEND", "legacy").strip().lower()
 
 # HTTP-статуси, що зазвичай означають bot-блокування — варто перепробувати браузером.
-RETRYABLE_STATUSES = {403, 429, 503}
+RETRYABLE_STATUSES = {401, 403, 429, 503}
 
 # Маркери сторінки-інтерстиціалу Cloudflare. Мовно-незалежні (службові скрипти,
 # а не локалізований текст). Свідомо НЕ беремо challenges.cloudflare.com — він
